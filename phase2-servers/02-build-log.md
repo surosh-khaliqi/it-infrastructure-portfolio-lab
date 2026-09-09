@@ -1,10 +1,10 @@
 # Phase 2 — Servers: Build Log
 
-Environment and design rationale are covered in `01-decisions.md`. This document is the as-executed build: commands, verification output, and the issues encountered along the way.
+Environment and design rationale are covered in [`01-decisions.md`](01-decisions.md). This document is the as-executed build: commands, verification output, and the issues encountered along the way.
 
 ## 1. Environment & Prerequisites (recap)
 
-Same Azure/Hyper-V nested lab from Phase 1. All six guest VMs and the three private virtual switches remained in place. Design decisions (single AD domain, DHCP relay, realmd/SSSD, SMB on both platforms) are documented in `01-decisions.md`.
+Same Azure/Hyper-V nested lab from Phase 1. All six guest VMs and the three private virtual switches remained in place. Design decisions (single AD domain, DHCP relay, realmd/SSSD, SMB on both platforms) are documented in [`01-decisions.md`](01-decisions.md).
 
 Pre-checks completed before any Phase 2 work:
 
@@ -36,7 +36,7 @@ w32tm /query /status
 sudo apt install chrony -y
 ```
 
-Final working `/etc/chrony/chrony.conf` (default `maxdistance` of 3 seconds was too strict for the initial multi-hour clock offset — see Issue 1):
+Final working `/etc/chrony/chrony.conf` (the source was not selected reliably during the initial large clock offset; `maxdistance` was increased during troubleshooting — see Issue 1):
 
 ```text
 server 10.10.12.10 iburst prefer
@@ -248,7 +248,7 @@ ipconfig /renew
 
 ### Dynamic DNS registration
 
-Initial leases showed `DnsRegistration: Complete` but no A records appeared in the zone. Root cause was a missing DHCP-to-DNS credential (see Issue 8). After:
+Initial leases showed `DnsRegistration: Complete` but no A records appeared in the zone. In this build, registration began working after explicit DHCP-to-DNS credentials were configured (see Issue 8). After:
 
 ```powershell
 Set-DhcpServerDnsCredential -Credential (Get-Credential)
@@ -501,7 +501,7 @@ klist
 dcdiag /v
 ```
 
-**Result:** All tests passed except DFSREvent (expected with a single-DC forest; SysVolCheck passed independently, confirming SYSVOL health).
+**Result:** All tests passed except `DFSREvent`, which reported an issue. `SysVolCheck` passed independently.
 
 **Evidence:** ![SRV-S1-SERVERS dcdiag header](screenshots/phase2-48-srvs1servers-dcdiag-header.png) ![SRV-S1-SERVERS dcdiag DFSREvent known issue](screenshots/phase2-49-srvs1servers-dcdiag-dfsrevent-known-issue.png) ![SRV-S1-SERVERS dcdiag summary](screenshots/phase2-50-srvs1servers-dcdiag-summary-complete.png)
 
@@ -513,7 +513,7 @@ dcdiag /v
 
 **Result:** All four combinations passed after the NTFS inheritance and winbind fixes documented in Issues 18 and 19.
 
-**Evidence:** See the six evidence screenshots in Section 8 (phase2-34 through phase2-40).
+**Evidence:** See the six access-control screenshots in Section 8 (`phase2-35` through `phase2-40`).
 
 ## 10. Final State
 
@@ -539,13 +539,13 @@ Phase 2 build and validation complete.
 
 ## 11. Troubleshooting & Issues
 
-### Issue 1 — Chrony would not synchronize (default maxdistance too strict)
+### Issue 1 — Chrony would not synchronize
 
 **Where:** SRV-S2-SERVERS
 
 **Symptom:** `chronyc tracking` showed Leap status “Not synchronised” and an enormous offset (~7.3 hours). Reachability improved but the source was never selected.
 
-**Root cause:** Chrony’s default `maxdistance` is 3 seconds. Nested VMs started with multi-hour clock drift, so the source was rejected regardless of reachability.
+**Root cause:** The time source was reachable but was not being selected during the initial large clock offset. Increasing `maxdistance`, then forcing a burst and step, allowed synchronization to complete. The observed fix is recorded here without treating the clock offset itself as the direct meaning of `maxdistance`.
 
 **Fix:**
 ```bash
@@ -557,7 +557,7 @@ sudo chronyc makestep
 maxdistance 16
 ```
 
-**Lesson:** In isolated nested labs, chrony’s default `maxdistance` is often too strict for the first sync. A modest permanent increase (e.g. 16) avoids repeating the force-sync dance after every reboot.
+**Lesson:** If a reachable chrony source is not being selected in a nested lab, check the source state and root-distance limits before assuming the problem is network reachability. In this build, a modest `maxdistance` increase remained part of the working configuration.
 
 ### Issue 2 — Clipboard non-functional between host and nested VMs
 
@@ -565,11 +565,11 @@ maxdistance 16
 
 **Symptom:** Clipboard completely non-functional even after enabling Guest Service Interface.
 
-**Root cause:** Nested Hyper-V accessed over RDP frequently breaks clipboard integration.
+**Root cause:** In this nested Hyper-V-over-RDP environment, clipboard integration remained unavailable even after Guest Service Interface was enabled.
 
 **Fix:** Typed all commands manually. No reliable clipboard path was found for this environment.
 
-**Lesson:** Plan on manual typing or an alternative transfer method (mounted ISO, serial console) rather than relying on clipboard sync in nested Hyper-V-over-RDP labs.
+**Lesson:** For this lab environment, manual entry or another transfer method was more reliable than depending on clipboard integration.
 
 ### Issue 3 — Install-ADDSForest interactive prompt / quoting confusion
 
@@ -643,14 +643,14 @@ OPTIONS="-id eth0.10 -iu eth0.20 -iu eth1"
 
 **Symptom:** Lease objects showed `DnsRegistration: Complete` but no A records appeared in the DNS zone. `nslookup` returned “Non-existent domain”.
 
-**Root cause:** DHCP Server must authenticate to an AD-integrated zone with an explicitly configured credential. Without `Set-DhcpServerDnsCredential`, the service still marks the lease as Complete (it attempted the update) but the authenticated write fails silently.
+**Root cause:** In this build, the DHCP service reported `DnsRegistration: Complete` even though the expected A records were not present. Explicit DHCP DNS credentials were then configured, after which the records registered successfully.
 
 **Fix:**
 ```powershell
 Set-DhcpServerDnsCredential -Credential (Get-Credential)
 ```
 
-**Lesson:** DHCP’s own `DnsRegistration: Complete` status is not authoritative proof a DNS record was written. Always cross-check with `Get-DnsServerResourceRecord`.
+**Lesson:** DHCP’s `DnsRegistration: Complete` status was not sufficient evidence that the DNS record existed. Cross-check the zone with `Get-DnsServerResourceRecord`.
 
 ### Issue 9 — ip_forward reset to 0 after router reboot (recurring)
 
@@ -828,3 +828,7 @@ icacls "C:\TechShare" /grant "BUILTIN\Administrators:(OI)(CI)F"
 - `security = ads` always needs winbindd, even when using the sss idmap backend.
 - Explicit share ACLs are not sufficient on their own — break inheritance.
 - Default working pattern on this host: test in subsets rather than attempting to run all six VMs simultaneously.
+
+---
+
+[← Main README](../README.md) · [01 — Design & Decisions](01-decisions.md) · [03 — Phase Summary →](03-phase-summary.md)
