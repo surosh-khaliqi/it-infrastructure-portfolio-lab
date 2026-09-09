@@ -133,14 +133,14 @@ Hardened the environment with router allow-lists and default-deny rules, SSH key
 │   ├── 03-phase-summary.md
 │   └── screenshots/
 └── docs/
-    ├── final-handover.md
+    ├── final_handover.md
     └── notable-issues.md
 ```
 
 The phase folders contain the detailed build work. For a shorter review, the best supporting documents are:
 
 - [Notable issues](docs/notable-issues.md) — selected troubleshooting cases from across the project
-- [Final handover](docs/final-handover.md) — final inventory, service details, verification steps, and lab scope
+- [Final handover](docs/final_handover.md) — final inventory, service details, verification steps, and lab scope
 
 ---
 
@@ -148,7 +148,7 @@ The phase folders contain the detailed build work. For a shorter review, the bes
 
 This is a portfolio lab running as nested virtualization on a 16 GB Azure Hyper-V host. The final environment was tested with all 7 VMs running together.
 
-Detailed limitations and final verification steps are documented in [docs/final-handover.md](docs/final-handover.md).
+Detailed limitations and final verification steps are documented in [docs/final_handover.md](docs/final_handover.md).
 
 ---
 
