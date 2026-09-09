@@ -17,7 +17,7 @@ What exists when this phase is complete:
 - Host group `ANS-Infrastructure` and dashboard `ANS Operations Center`
 - Email notification for High and Disaster severity triggers
 - ServiceNow assignment groups, categories/subcategories, and a dedicated integration account
-- Zabbix-to-ServiceNow REST integration for automatic incident creation from selected alerts
+- Zabbix monitoring integrated with ServiceNow through REST for incident creation and tracking
 
 Security hardening is outside this phase. Router filtering and SSH hardening are handled in Phase 4.
 
@@ -92,7 +92,7 @@ ServiceNow is used as the incident destination for monitoring alerts, not as a f
 - three ANS assignment groups
 - monitoring-related categories and subcategories
 - a dedicated integration account
-- REST-based incident creation from Zabbix
+- REST-based incident creation for monitoring alerts
 - incident assignment, documentation, resolution, and closure
 
 No automated remediation is included.
@@ -118,7 +118,7 @@ No automated remediation is included.
 | Host grouping | `ANS-Infrastructure` | Provides one group for the seven monitored VMs |
 | Dashboard | `ANS Operations Center` | Central view for host, service, and network status |
 | Email alerting | Gmail media type for High and Disaster severity | Provides an external notification path for higher-severity events |
-| ServiceNow integration | REST incident creation using `monitoring-integration` | Sends selected Zabbix alerts into a tracked incident workflow |
+| ServiceNow integration | REST incident creation using `monitoring-integration` | Connects monitoring alerts to a tracked incident workflow |
 | ServiceNow routing | Three assignment groups with monitoring-related categories/subcategories | Provides consistent incident routing and documentation |
 | Security hardening | Deferred to Phase 4 | Keeps monitoring work separate from router and SSH hardening |
 
@@ -170,8 +170,6 @@ The seven monitored VM host objects are:
 | Integration account | `monitoring-integration` |
 | Integration account roles | `itil`, `rest_service` |
 
-The role names above are the ServiceNow roles assigned to the integration account; they are documented as configuration details rather than as a claim of ITIL knowledge.
-
 Passwords, App Passwords, and the ServiceNow instance hostname are not included in the public documentation.
 
 No existing Phase 1 or Phase 2 device names or IP addresses were changed.
@@ -188,7 +186,7 @@ The Phase 3 diagram keeps the existing two-site infrastructure and adds `MON-SRV
 
 ## 6. Completed Outcome
 
-Phase 3 completed the monitoring layer for the seven-VM lab. Zabbix was collecting host and service data across both sites, custom triggers and WAN checks were active, higher-severity alerts had an email path, and ServiceNow was connected through REST for incident creation.
+Phase 3 completed the monitoring layer for the seven-VM lab. Zabbix was collecting host and service data across both sites, custom triggers and WAN checks were active, higher-severity alerts had an email path, and ServiceNow was connected through REST for incident creation and tracking.
 
 Detailed commands, validation, screenshots, and troubleshooting are recorded in [`02-build-log.md`](02-build-log.md). A shorter completed-phase view is in [`03-phase-summary.md`](03-phase-summary.md).
 
