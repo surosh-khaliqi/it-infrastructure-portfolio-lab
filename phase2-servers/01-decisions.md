@@ -1,207 +1,182 @@
 # Phase 2 — Servers: Design & Decisions
 
-## 1. Objectives
+## 1. Phase Goal
 
-Phase 2 layers directory services, name resolution, dynamic addressing, and cross-platform file sharing onto the routed VLAN foundation built in Phase 1. The goal is a coherent, centrally managed environment rather than a collection of isolated static devices.
+Phase 2 adds core server services to the routed two-site network built in Phase 1. The focus is centralized identity, DNS, DHCP, time synchronization, domain membership, and cross-platform file sharing.
 
-What exists when this phase is complete:
+At the end of this phase, the lab has:
 
-- Active Directory Domain Services running on `SRV-S1-SERVERS`, with AD-integrated DNS serving both sites
-- Every device re-pointed from Phase 1’s “no DNS configured” state to `SRV-S1-SERVERS` (10.10.12.10)
-- Time synchronization in place before domain join (`SRV-S1-SERVERS` as the domain time source; `SRV-S2-SERVERS` synced via chrony) so Kerberos authentication does not fail silently on clock drift
-- DHCP relay configured on both routers, delivering dynamic addressing to both Users VLANs from a single central pair of scopes
-- `SRV-S2-SERVERS` joined to the domain as a Linux member server (Kerberos/LDAP via SSSD), with Samba `idmap_sss` so AD security groups resolve correctly to Linux permissions
-- Both Windows clients domain-joined and receiving DHCP addresses
-- A small set of sample AD user accounts and security groups so group-based file-share access can be tested with real principals
-- Cross-platform file sharing (native SMB share on Windows, Samba share on Linux)
-- Documentation covering design rationale, DNS zone layout, DHCP scope/relay design, domain-join method, file-share ACL design, and the tests that prove the whole stack works
+- Active Directory Domain Services and AD-integrated DNS on `SRV-S1-SERVERS`
+- centralized DHCP for both Users VLANs, with relay agents on both Ubuntu routers
+- both Windows clients using DHCP and joined to `ans.local`
+- `SRV-S2-SERVERS` joined to the domain as a Linux member server
+- time synchronization in place between the Windows domain controller and Linux server
+- Windows SMB and Linux Samba shares using AD security groups for access control
+- sample users and groups for validating read-write and read-only access
 
-No monitoring or firewall/ACL work is done in this phase — those belong to Phase 3 and Phase 4.
+Monitoring is added in Phase 3. Router filtering, SSH hardening, and the remaining security controls are added in Phase 4.
 
-**How this supports later phases:**
+### How this supports later phases
 
-- Phase 3 (Monitoring) gains live services to watch (DNS queries, DHCP leases, AD authentication events, file-share access) instead of only raw link connectivity
-- Phase 4 (Security & Automation) can use AD as the enforcement point for Group Policy; DHCP/DNS become the foundation for any future NAC-style work; SSH hardening and VLAN-boundary ACLs are layered onto an already-complete server set
+- **Phase 3 — Monitoring:** adds Zabbix checks for AD, DNS, DHCP, time synchronization, Samba, host availability, and WAN performance
+- **Phase 4 — Security:** hardens router forwarding and SSH access around the services and systems established in the earlier phases
 
-**Skills demonstrated:** AD DS deployment and basic design, AD-integrated DNS, DHCP scope design plus relay configuration across subnet and WAN boundaries, Linux domain join via realmd/SSSD (cross-platform identity), SMB/Samba file-share design with AD group enforcement, and continued cross-platform (Windows + Linux) administration.
+### Main technical areas
 
-**Constraints:**
+Active Directory Domain Services, AD-integrated DNS, Windows DHCP, DHCP relay, Windows domain join, Linux AD integration with realmd/SSSD, Kerberos, chrony, SMB/Samba, AD security groups, and cross-platform permissions.
 
-- Same Azure/host budget discipline as Phase 1 — VMs not actively under test are shut down
-- AD DS adds measurable memory overhead on `SRV-S1-SERVERS`; allocation is increased if host headroom allows rather than starving the domain controller
-- Scope is deliberately capped so the phase does not creep into monitoring or security work
+---
 
-## 2. Options Considered
+## 2. Design Options
 
-### Directory Services Scope
+### Directory service model
 
-| Option | Pros | Cons |
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Single AD domain (chosen)** | Matches how a real organization normally runs; puts the WAN link to work; joining a Linux server via SSSD is a less commonly demonstrated skill | Site 2 authentication depends on the WAN link remaining up |
-| Two independent sites (AD only at Site 1, Linux-native services at Site 2) | No WAN dependency for local services | Reads as two disconnected environments and wastes the multi-site story Phase 1 already built |
-| No AD — DNS/DHCP only | Fastest to build | Skips the exact role `SRV-S1-SERVERS` was provisioned for in Phase 1 |
+| **Single AD domain — chosen** | Centralizes identity and DNS for both sites and uses the existing routed WAN path | Site 2 depends on the WAN link for central directory and DNS access |
+| Separate directory services per site | Reduces dependency on the WAN for local authentication | Adds unnecessary complexity for a small two-site lab |
+| No directory service | Simplest server setup | Removes domain authentication and centralized identity from the phase |
 
-### DHCP Delivery Method
+A single `ans.local` domain was selected so both Windows clients and the Linux server could use the same identity source without adding a second Domain Controller.
 
-| Option | Pros | Cons |
+### DHCP delivery
+
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Relay via routers (chosen)** | Proves DHCP works across subnet boundaries and over the WAN — the realistic enterprise case; the routers already exist and only need one relay configuration each | Relay must be pointed correctly or leases silently never arrive |
-| Local DHCP server per Users VLAN | Simpler, no relay needed | Requires additional VMs per site; unrealistic — DHCP servers do not normally sit inside the VLAN they serve |
-| Keep everything static | Zero risk | Skips DHCP entirely — one of the three services Phase 1 explicitly deferred |
+| **Central DHCP with router relay — chosen** | Keeps both scopes on one server and allows DHCP to cross VLAN and site boundaries | Relay configuration must be correct on both routers |
+| DHCP server at each site | Keeps address assignment local to each site | Requires additional DHCP service instances and separate administration |
+| Static addressing for clients | Simple and predictable | Does not provide centralized client address management |
 
-### Linux Domain-Join Method (`SRV-S2-SERVERS`)
+`SRV-S1-SERVERS` hosts both Users-VLAN scopes. Each Ubuntu router relays DHCP traffic to `10.10.12.10`, including Site 2 requests that cross the WAN link.
 
-| Option | Pros | Cons |
+### Linux domain integration
+
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **realmd + SSSD (chosen)** | Modern standard tooling; automates Kerberos/LDAP/NSS configuration; widely documented | One more service stack to learn |
-| Manual Kerberos + LDAP configuration | Deeper “under the hood” understanding | Much slower and more fragile, with no meaningful interview value over realmd |
-| Winbind | Works and is Samba-native | Considered a legacy path; realmd is the current recommended approach |
+| **realmd + SSSD — chosen for Linux identity** | Handles domain discovery, Kerberos integration, NSS/PAM identity lookup, and domain logins | Adds several Linux identity components that must be configured together |
+| Manual Kerberos and LDAP configuration | Provides direct control over each component | More configuration and more opportunities for mismatch |
+| Samba/Winbind as the primary Linux identity path | Integrates closely with Samba | Not needed as the main NSS/PAM identity method for this build |
 
-### File Sharing Protocol
+`SRV-S2-SERVERS` uses realmd and SSSD for Linux domain membership and AD identity resolution. Samba later uses `security = ads` with the SSSD idmap backend; that Samba configuration also requires `winbindd` and a supplementary `net ads join`, as documented in the build log.
 
-| Option | Pros | Cons |
+### File-sharing protocol
+
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **SMB both sides — native share on Windows, Samba on Linux (chosen)** | One protocol and one client experience on both operating systems — cleanest cross-platform proof | Samba configuration is more involved than NFS |
-| NFS on Linux, SMB on Windows | Native to each OS | Two protocols and two access methods; weaker “coherent system” story; Windows-to-NFS access is awkward |
-| SMB on Windows only, no Linux share | Simplest | Drops the cross-platform file-sharing demonstration entirely |
+| **SMB on Windows and Samba on Linux — chosen** | Gives Windows clients one access protocol for both servers and allows the same AD groups to be tested on each share | Samba requires additional domain-integration and permission configuration |
+| SMB on Windows and NFS on Linux | Uses a native Linux file-sharing protocol | Gives clients two different access methods and permission models |
+| Windows SMB only | Simplest file-sharing setup | Does not test AD-backed file access on the Linux server |
+
+Both servers therefore expose a file share over SMB-compatible protocols while using the same two AD security groups for access testing.
+
+---
 
 ## 3. Final Design Decisions
 
-| Decision | Choice | Why |
+| Decision | Final Choice | Reason |
 |---|---|---|
-| Directory service model | Single AD domain `ans.local`, `SRV-S1-SERVERS` as the sole Domain Controller | Matches a realistic single-organization deployment; makes full use of the WAN link and both server VMs |
-| DNS | AD-integrated DNS on `SRV-S1-SERVERS` | Keeps DNS and directory data consistent automatically; replaces any standalone BIND9 plan |
-| DHCP delivery | Relay agent on both routers pointing to `SRV-S1-SERVERS`; scopes cover the Users VLANs only | Realistic enterprise pattern; proves DHCP across subnet and WAN boundaries |
-| Static vs. dynamic addressing | Servers, routers, and the WAN link stay static; only the Users-VLAN PCs convert to DHCP | Infrastructure devices need predictable addresses; only end-user devices benefit from dynamic assignment |
-| Linux domain integration | realmd + SSSD on `SRV-S2-SERVERS` | Standard, well-documented method for joining Linux to AD; demonstrates real cross-platform identity |
-| Time sync | `SRV-S1-SERVERS` is the domain time source; `SRV-S2-SERVERS` is synced via chrony before domain join | Kerberos rejects authentication if clocks drift too far; this is a prerequisite, not an optional extra |
-| DNS client configuration | Every device is explicitly re-pointed to `SRV-S1-SERVERS` (10.10.12.10) | Phase 1 devices had no DNS configured; the change must be deliberate, not assumed as a side-effect of domain join |
-| Samba group resolution | `idmap_sss` configured on `SRV-S2-SERVERS` | realmd/SSSD authenticates the server to AD, but Samba still needs ID mapping so AD group SIDs become Linux GIDs; without it, security-group ACLs on the Samba share do not enforce |
-| Test accounts | Sample AD user accounts created across both site OUs | Group-based ACLs need real principals to test against |
-| File sharing | Native SMB share on `SRV-S1-SERVERS`; Samba share on `SRV-S2-SERVERS` | Same protocol on both sides — cleanest cross-platform access story |
-| Print services | Out of scope | Low relevance and disproportionate setup cost for the value it would add |
-| Syslog / SSH hardening | Deferred | Belongs to Phase 3 (Monitoring) and Phase 4 (Security & Automation) respectively |
+| Directory service | Single AD domain `ans.local` | One identity source is sufficient for the two-site lab and supports both Windows and Linux domain membership |
+| Domain Controller | `SRV-S1-SERVERS` | Reuses the existing Site 1 Windows Server without adding another VM |
+| DNS | AD-integrated DNS on `SRV-S1-SERVERS` | Keeps domain name resolution with AD and supports the domain-join workflow |
+| DHCP | Two centralized scopes on `SRV-S1-SERVERS` | Provides one DHCP service for both Users VLANs |
+| DHCP delivery | Relay on `RTR-SITE1` and `RTR-SITE2` | Allows DHCP requests to cross VLAN boundaries and the Site 2 WAN path |
+| Client addressing | DHCP for both Windows clients | Moves user endpoints from Phase 1 static addresses into managed scopes |
+| Infrastructure addressing | Static for routers and servers | Keeps gateways and server services at predictable addresses |
+| Linux identity integration | realmd + SSSD on `SRV-S2-SERVERS` | Provides AD-backed Linux user and group resolution and domain login |
+| Samba domain integration | `security = ads` with SSSD idmap backend | Allows Samba to resolve and enforce the AD groups used by the Linux share |
+| Time synchronization | `SRV-S1-SERVERS` as domain time source; chrony on `SRV-S2-SERVERS` | Keeps clocks aligned before Kerberos-based authentication is used |
+| DNS clients | Both Windows clients and `SRV-S2-SERVERS` use `10.10.12.10` | These systems require the AD DNS server for domain name resolution and joins |
+| File sharing | Windows SMB share plus Linux Samba share | Provides the same client protocol on both servers |
+| Share authorization | `SG-FileShare-ReadWrite` and `SG-FileShare-ReadOnly` | Allows the same access model to be validated on Windows and Linux |
+| Print services | Out of scope | Not required for the server-service goals of this phase |
+| Monitoring | Deferred to Phase 3 | Keeps service monitoring separate from the Phase 2 server build |
+| Security hardening | Deferred to Phase 4 | Router filtering and SSH hardening are handled after the server and monitoring layers are complete |
 
-## 4. Naming, Domain Structure & Addressing
+### Server sizing note
 
-**Domain & service naming**
+Before the Phase 2 build, `SRV-S2-SERVERS` was increased from 1 GB RAM / 1 vCPU to 2 GB RAM / 2 vCPU while powered off. The added resources supported the Linux domain-integration and Samba services without changing the overall topology.
+
+---
+
+## 4. Domain, AD Structure & Addressing
+
+### Domain and service naming
 
 | Item | Value |
 |---|---|
-| AD domain name | `ans.local` |
-| DNS zones | Forward: `ans.local`<br>Reverse: `11.10.10.in-addr.arpa`, `12.10.10.in-addr.arpa`, `21.10.10.in-addr.arpa`, `22.10.10.in-addr.arpa` |
-| DHCP scope names | `DHCP-S1-USERS`, `DHCP-S2-USERS` |
-| File shares | `\\SRV-S1-SERVERS\TechShare` (Windows SMB), `//SRV-S2-SERVERS/techshare` (Samba) |
+| AD domain | `ans.local` |
+| NetBIOS name | `ANS` |
+| DNS forward zone | `ans.local` |
+| DNS reverse zones | `11.10.10.in-addr.arpa`, `12.10.10.in-addr.arpa`, `21.10.10.in-addr.arpa`, `22.10.10.in-addr.arpa` |
+| DHCP scopes | `DHCP-S1-USERS`, `DHCP-S2-USERS` |
+| Windows share | `\\SRV-S1-SERVERS\TechShare` |
+| Linux Samba share | `//SRV-S2-SERVERS/techshare` |
 
-**OU structure**
+### Phase 2 AD objects
 
-```
+```text
 ans.local
- ├─ OU=Site1
- │   ├─ OU=Users     (PC-S1-USERS, Site 1 user accounts)
- │   └─ OU=Servers   (SRV-S1-SERVERS)
- └─ OU=Site2
-     ├─ OU=Users     (PC-S2-USERS, Site 2 user accounts)
-     └─ OU=Servers   (SRV-S2-SERVERS)
+├─ OU=Site1
+│  ├─ OU=Users
+│  │  ├─ PC-S1-USERS
+│  │  └─ s1.user
+│  └─ OU=Servers
+├─ OU=Site2
+│  ├─ OU=Users
+│  │  ├─ PC-S2-USERS
+│  │  └─ s2.user
+│  └─ OU=Servers
+│     └─ SRV-S2-SERVERS
+└─ OU=Groups
+   ├─ SG-FileShare-ReadWrite
+   └─ SG-FileShare-ReadOnly
 ```
 
-Security groups `SG-FileShare-ReadWrite` and `SG-FileShare-ReadOnly` live under a top-level `OU=Groups` and govern access to both shares so the ACL logic is identical on Windows and Linux.
+The Site 1 and Site 2 OUs are used for logical organization only. They are not AD Sites and Services objects. With a single Domain Controller, no AD replication topology is required in this phase.
 
-Sample accounts: one test user per site OU (`s1.user`, `s2.user`) assigned to the two security groups in different combinations — enough to prove read-write works, read-only works, and access is correctly denied where expected.
+`SG-FileShare-ReadWrite` contains `s1.user`, while `SG-FileShare-ReadOnly` contains `s2.user`. Those accounts are used to verify write, read, and denied-write behavior on both file shares.
 
-**Note on OUs vs. AD Sites:** The `OU=Site1` / `OU=Site2` containers are ordinary organizational units used for logical grouping. They are **not** AD Sites and Services subnet/site objects (which control replication topology and client site affinity). With a single domain controller there is nothing to replicate, so configuring actual AD Sites is out of scope for this phase. The distinction is stated explicitly so it is understood as a deliberate scope decision rather than an omission.
+### Addressing changes from Phase 1
 
-**IP addressing — DHCP layered on the Phase 1 static plan**
-
-| Segment | Subnet | Static (unchanged from Phase 1) | New DHCP pool |
+| Segment | Subnet | Infrastructure addressing | Phase 2 client addressing |
 |---|---|---|---|
-| VLAN10-USERS, Site 1 | 10.10.11.0/24 | Gateway .1 | .100–.200 → PC-S1-USERS |
-| VLAN20-SERVERS, Site 1 | 10.10.12.0/24 | Gateway .1, SRV-S1-SERVERS .10 | none — Servers VLAN stays static-only |
-| WAN-LINK | 10.10.0.0/30 | unchanged | n/a |
-| VLAN10-USERS, Site 2 | 10.10.21.0/24 | Gateway .1 | .100–.200 → PC-S2-USERS (relayed across WAN) |
-| VLAN20-SERVERS, Site 2 | 10.10.22.0/24 | Gateway .1, SRV-S2-SERVERS .10 | none |
+| VLAN 10 — Users, Site 1 | 10.10.11.0/24 | Gateway `10.10.11.1` | DHCP pool `10.10.11.100–200`; `PC-S1-USERS` received `10.10.11.100` |
+| VLAN 20 — Servers, Site 1 | 10.10.12.0/24 | Gateway `10.10.12.1`; `SRV-S1-SERVERS` `10.10.12.10` | No DHCP scope |
+| WAN link | 10.10.0.0/30 | `RTR-SITE1` `10.10.0.1`; `RTR-SITE2` `10.10.0.2` | n/a |
+| VLAN 10 — Users, Site 2 | 10.10.21.0/24 | Gateway `10.10.21.1` | DHCP pool `10.10.21.100–200`; `PC-S2-USERS` received `10.10.21.100` |
+| VLAN 20 — Servers, Site 2 | 10.10.22.0/24 | Gateway `10.10.22.1`; `SRV-S2-SERVERS` `10.10.22.10` | No DHCP scope |
 
-**Device / role additions**
+The routers and servers keep their static Phase 1 addresses. Only the two Windows user endpoints move from static `.10` addresses into the DHCP pools.
+
+### Phase 2 role changes
 
 | VM | Phase 1 role | Phase 2 additions |
 |---|---|---|
-| RTR-SITE1 | Router | DHCP relay agent for VLAN10-USERS Site 1 |
-| RTR-SITE2 | Router | DHCP relay agent, forwarding across the WAN link to SRV-S1-SERVERS |
-| SRV-S1-SERVERS | Windows Server, static | AD DS (Domain Controller), AD-integrated DNS, DHCP Server (both scopes), File Server (SMB share), domain time source |
-| SRV-S2-SERVERS | Ubuntu Server, static | chrony synced to SRV-S1-SERVERS, domain member via realmd/SSSD, Samba file share with idmap_sss, DNS re-pointed to SRV-S1-SERVERS |
-| PC-S1-USERS | Windows client, static | Converts to DHCP, domain-joined to ans.local, DNS re-pointed to SRV-S1-SERVERS |
-| PC-S2-USERS | Windows client, static | Converts to DHCP (via relay across WAN), domain-joined to ans.local, DNS re-pointed to SRV-S1-SERVERS |
+| `RTR-SITE1` | Ubuntu router | DHCP relay for Site 1 Users VLAN |
+| `RTR-SITE2` | Ubuntu router | DHCP relay for Site 2 Users VLAN across the WAN path |
+| `SRV-S1-SERVERS` | Windows Server | AD DS, AD-integrated DNS, DHCP, SMB file share, domain time source |
+| `SRV-S2-SERVERS` | Ubuntu Server | chrony, AD membership through realmd/SSSD, Samba file share, AD group resolution |
+| `PC-S1-USERS` | Windows client | DHCP client, AD DNS client, domain member |
+| `PC-S2-USERS` | Windows client | DHCP client through relay, AD DNS client, domain member |
 
-No VMs are renamed. Every device keeps its Phase 1 identity and gains roles, so the checkpoint and documentation history remains continuous.
+No guest VMs are renamed between phases; the same six Phase 1 systems continue into the server build.
 
-**Plan-vs-actual note:** Before Phase 2 work began, `SRV-S2-SERVERS` memory and vCPU were increased from the Phase 1 values (1 GB / 1 vCPU) to 2 GB / 2 vCPU while the VM was powered off. This was done to give the Linux domain member and Samba stack adequate headroom; the change is noted here for accuracy and does not alter the overall design.
+---
 
-## 5. Topology Diagram
+## 5. Phase 2 Topology
 
-```mermaid
-%%{init: {'flowchart': {'nodeSpacing': 60, 'rankSpacing': 55}}}%%
-flowchart LR
+![Phase 2 Server Topology](screenshots/Phase2_Topology.svg)
 
-    subgraph SITE1["SITE 1"]
-        direction TB
+*Phase 2 topology showing the existing routed two-site network with centralized AD DS, DNS, DHCP, domain membership, time synchronization, and cross-platform file services added.*
 
-        PC1["<b>PC-S1-USERS</b><br/>10.10.11.100 (DHCP)<br/>Windows Client<br/><font color='#285A9E'>VLAN 10 · domain-joined</font>"]
+---
 
-        SRV1["<b>SRV-S1-SERVERS</b><br/>10.10.12.10 (static)<br/>Windows Server<br/><font color='#285A9E'>AD DS · DNS · DHCP · SMB<br/>domain time source</font>"]
+## 6. Phase 2 Outcome
 
-        VS1{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
+Phase 2 finished with `ans.local` operating across both sites. Both Windows clients received DHCP leases and joined the domain, `SRV-S2-SERVERS` resolved AD users and groups through SSSD, and the Linux server participated in Kerberos-backed domain access. DNS resolution, DHCP relay, time synchronization, domain health, and group-based file-share permissions were all validated during the build.
 
-        R1["<b>RTR-SITE1</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.11.1<br/>VLAN 20: 10.10.12.1<br/><font color='#285A9E'>DHCP relay<br/>WAN: 10.10.0.1/30</font>"]
+The commands, screenshots, validation results, and troubleshooting are documented in [02-build-log.md](02-build-log.md).
 
-        PC1 -->|"VLAN 10"| VS1
-        SRV1 -->|"VLAN 20"| VS1
-        VS1 -->|"802.1Q Trunk"| R1
-    end
+A shorter completed-phase view is available in [03-phase-summary.md](03-phase-summary.md).
 
-    WAN[/"<b>WAN LINK</b><br/>10.10.0.0/30<br/>Static Routing"/]
-
-    R1 -->|"10.10.0.1/30"| WAN
-    WAN -->|"10.10.0.2/30"| R2
-
-    subgraph SITE2["SITE 2"]
-        direction TB
-
-        R2["<b>RTR-SITE2</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.21.1<br/>VLAN 20: 10.10.22.1<br/><font color='#285A9E'>DHCP relay<br/>WAN: 10.10.0.2/30</font>"]
-
-        VS2{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
-
-        PC2["<b>PC-S2-USERS</b><br/>10.10.21.100 (DHCP)<br/>Windows Client<br/><font color='#285A9E'>VLAN 10 · domain-joined</font>"]
-
-        SRV2["<b>SRV-S2-SERVERS</b><br/>10.10.22.10 (static)<br/>Ubuntu Server<br/><font color='#285A9E'>domain member (SSSD)<br/>Samba share · chrony</font>"]
-
-        R2 -->|"802.1Q Trunk"| VS2
-        VS2 -->|"VLAN 10"| PC2
-        VS2 -->|"VLAN 20"| SRV2
-    end
-
-    classDef endpoint fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef server fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef switch fill:#EEF3F8,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef router fill:#F5F8FC,stroke:#183B63,stroke-width:3px,color:#111827;
-    classDef wan fill:#EDF4FF,stroke:#285A9E,stroke-width:2px,color:#111827;
-
-    class PC1,PC2 endpoint;
-    class SRV1,SRV2 server;
-    class VS1,VS2 switch;
-    class R1,R2 router;
-    class WAN wan;
-
-    style SITE1 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-    style SITE2 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-
-    linkStyle default stroke:#334155,stroke-width:2px
-```
-
-DHCP requests from either Users VLAN travel to the local router’s relay agent and are forwarded to `SRV-S1-SERVERS`. For Site 2 this path crosses the WAN link. Domain authentication and DNS queries follow the same path.
-
-## 6. Status
-
-- Step 1 — Understand the goal — done
-- Step 2 — Research options — done
-- Step 3 — Make decisions — done
-- Step 4 — Build (see `02-build-log.md`)
+[← Main README](../README.md) · [Build log](02-build-log.md) · [Phase summary](03-phase-summary.md)
