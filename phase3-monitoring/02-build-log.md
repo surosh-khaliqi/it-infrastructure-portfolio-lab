@@ -1,6 +1,6 @@
 # Phase 3 — Monitoring: Build Log
 
-Environment and design rationale are covered in `01-decisions.md`. This document is the as-executed build: commands, verification output, and the issues encountered along the way.
+Environment and design rationale are covered in [`01-decisions.md`](01-decisions.md). This document is the as-executed build: commands, verification output, and the issues encountered along the way.
 
 ## 1. Environment & Prerequisites (recap)
 
@@ -16,7 +16,7 @@ Seven VMs on the same Azure Hyper-V host used in Phases 1–2. Naming, IPs, and 
 | SRV-S2-SERVERS | Ubuntu (Samba) | 10.10.22.10 | VLAN 20, Site 2 |
 | MON-SRV | Ubuntu Server (Zabbix) | 10.10.12.20 | VLAN 20, Site 1 — **new** |
 
-Dynamic Memory was enabled on all six existing VMs before the seventh guest was created (see plan-vs-actual note in `01-decisions.md`). Local admin/SSH accounts used: `netadmin` (created this phase on the routers and SRV-S2-SERVERS).
+Dynamic Memory was enabled on all six existing VMs before the seventh guest was created (see the plan-vs-actual notes in [`01-decisions.md`](01-decisions.md)). Local admin/SSH accounts used: `netadmin` (created this phase on the routers and SRV-S2-SERVERS).
 
 ## 2. Part A — Prerequisites & MON-SRV
 
@@ -238,7 +238,7 @@ Get-NetTCPConnection -LocalPort 10050 -State Listen
 ![PC-S1 agent + firewall](screenshots/phase3-20-pcs1users-agent-firewall.png)
 ![PC-S2 agent + firewall](screenshots/phase3-21-pcs2users-agent-firewall.png)
 
-TempNAT adapters deliberately left attached on the three Windows hosts (with the corrected persistent routes) for the remainder of the phase; scheduled for removal at project close.
+TempNAT adapters remained attached on the three Windows hosts, with the corrected persistent routes, for the remainder of Phase 3.
 
 ### DHCP lease-count UserParameters (SRV-S1-SERVERS)
 
@@ -367,9 +367,9 @@ curl -sI https://<servicenow-instance-url>
 
 ![NAT + HTTPS proof](screenshots/phase3-35-monsrv-nat-https-proof.png)
 
-### ServiceNow API test
+### ServiceNow REST integration test
 
-Incident created via REST using the integration user. Ticket later resolved and closed in the UI.
+Incident created through the ServiceNow REST API using the integration user. The incident was then tracked through resolution and closure in the UI.
 
 ![API incident created/closed](screenshots/phase3-36-api-incident-created-closed.png)
 
@@ -437,11 +437,11 @@ All seven VMs checkpointed as `Phase3-Complete-Clean`. Superseded mid-phase chec
 
 #### Test 6 — ServiceNow incident lifecycle
 
-**Objective:** Prove an alert can become a tracked incident and be closed.
+**Objective:** Confirm the ServiceNow REST integration can create and track a monitoring incident.
 
-**Method:** REST POST via the integration user; subsequent UI resolution/closure.
+**Method:** REST POST through the integration user, followed by incident resolution and closure in the ServiceNow UI.
 
-**Result:** Incident created with correct category, subcategory, and assignment group; later closed.
+**Result:** Incident created with the expected category, subcategory, and assignment group, then tracked through closure.
 
 **Evidence:** ![API incident](screenshots/phase3-36-api-incident-created-closed.png)
 
@@ -466,7 +466,7 @@ sudo sysctl --system
 ```
 (Temporary; permanent fix in Issue 4.)
 
-**Lesson:** When ICMP works but TCP fails across a router, check `ip_forward` before assuming a firewall or routing-table problem.
+**Lesson:** When forwarded traffic behaves unexpectedly, verify `ip_forward` early alongside the routing and firewall state.
 
 ### Issue 2 — MON-SRV ufw blocked inbound SSH
 
@@ -499,7 +499,7 @@ DEFAULT_FORWARD_POLICY="ACCEPT"
 sudo ufw reload
 ```
 
-**Lesson:** ufw’s forward policy is independent of the per-port allow rules. On a router it must be set explicitly.
+**Lesson:** ufw’s forwarding policy is separate from host-level allow rules. In Phase 3, forwarding was temporarily left permissive so monitoring traffic could traverse the routers; Phase 4 replaces this with explicit route allow-lists and a default-deny forwarding policy.
 
 ### Issue 4 — Real root cause of the recurring ip_forward resets
 
@@ -564,9 +564,7 @@ route -p add 10.10.0.0 mask 255.255.0.0 <real-gateway> metric 1 if <domain-ifInd
 
 **Symptom:** Item first reported “Value of type 'string' is not suitable for value type 'Numeric (unsigned)'”, then after an `[int]` cast returned 0 despite an active lease existing.
 
-**Root cause:** Two independent PowerShell behaviours:
-1. Output was still a string without an explicit cast.
-2. `.Count` on a single (non-array) object returns `$null`, not 1.
+**Root cause:** The command did not consistently return the numeric count Zabbix expected when the query produced a single lease object. Explicit casting and forcing array context corrected the result.
 
 **Fix:**
 ```ini
@@ -574,7 +572,7 @@ UserParameter=dhcp.leasecount.s1,powershell -NoProfile -Command "[int]@(Get-Dhcp
 ```
 (The `@()` forces array context.)
 
-**Lesson:** Always force array context with `@()` when counting PowerShell pipeline results that might contain zero or one object.
+**Lesson:** When a PowerShell query may return zero or one object, forcing array context with `@()` gives a predictable count for Zabbix numeric items.
 
 ### Issue 8 — Permanent NAT default route broke internal connectivity (major incident)
 
@@ -595,4 +593,8 @@ Netplan updated to match; `netplan apply` confirmed stable.
 
 **Lesson:** A permanent “internet” adapter on a monitoring host must never install a competing default route. Scope the routes to the exact external destinations required.
 
-**Overall summary:** Every issue was a configuration or ordering problem; none required design changes to the monitoring architecture. The most valuable outcome was the permanent identification of the `ip_forward` reset root cause that had spanned all three phases.
+**Overall summary:** Every issue was resolved through configuration or sequencing changes without changing the monitoring architecture. Phase 3 also identified the persistent `ip_forward` reset cause in `/etc/ufw/sysctl.conf`, closing a problem that had appeared in earlier phases.
+
+---
+
+[← Main README](../README.md) · [01 — Design & Decisions](01-decisions.md) · [03 — Phase Summary →](03-phase-summary.md)
