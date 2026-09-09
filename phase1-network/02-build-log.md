@@ -1,8 +1,8 @@
 # Phase 1 — Network: Build Log
 
-Environment and design rationale are covered in `01-decisions.md`. This document is the
-as-executed build: commands, verification output, and the issues encountered along the
-way.
+This is the as-built record for Phase 1: the configuration steps, validation results, and troubleshooting completed while building the network foundation.
+
+Design choices and the addressing plan are documented in [01-decisions.md](01-decisions.md). A shorter end-of-phase summary is available in [03-phase-summary.md](03-phase-summary.md).
 
 ## 1. Host & Prerequisites (recap)
 
@@ -191,9 +191,9 @@ Get-VMNetworkAdapterVlan -VMName PC-S1-USERS
 Static IP set via Windows Settings GUI: `10.10.11.10` / `255.255.255.0` / gateway
 `10.10.11.1`. Confirmed via `ipconfig /all`.
 
-Windows Firewall disabled for the lab (`Set-NetFirewallProfile -Profile
+Windows Firewall was disabled during Phase 1 testing (`Set-NetFirewallProfile -Profile
 Domain,Public,Private -Enabled False`) after a targeted ICMP rule attempt failed on a
-display-name mismatch.
+display-name mismatch. It was re-enabled later in the project with scoped rules.
 
 ![PC-S1-USERS VLAN access confirmed](screenshots/phase1-07-pcs1users-vlan-access.png)
 ![PC-S1-USERS ipconfig](screenshots/phase1-08-pcs1users-ipconfig.png)
@@ -224,7 +224,8 @@ Standard is sufficient for this lab.
 
 Post-install: renamed from default `WIN-JSN217VPG71` to `SRV-S1-SERVERS`. Static IP set
 via Server Manager: `10.10.12.10` / `255.255.255.0` / gateway `10.10.12.1`. Confirmed via
-`ipconfig /all` and `hostname`. Windows Firewall disabled for all profiles.
+`ipconfig /all` and `hostname`. Windows Firewall was disabled during Phase 1 testing and
+was re-enabled later in the project with scoped rules.
 
 ![SRV-S1-SERVERS ipconfig](screenshots/phase1-09-srvs1servers-ipconfig.png)
 
@@ -321,8 +322,8 @@ Matches the IP addressing plan in `01-decisions.md`, no deviation.
 
 ## 5. Validation
 
-Executed in order, starting/stopping VMs per test to manage the host's memory ceiling (see
-Issue 12).
+Tests were run in order. Some validation was completed with only the VMs required for that
+test powered on because of the 16 GB host limit (see Issue 12).
 
 #### Test 1 — Local gateway reachability
 
@@ -393,7 +394,7 @@ tracert 10.10.22.10
 
 **Evidence:** ![Tracert PC-S1-USERS to SRV-S2-SERVERS](screenshots/phase1-16-test5-tracert-pcs1users-to-srvs2servers.png)
 
-#### Test 6 — VLAN segmentation enforcement (stretch)
+#### Test 6 — VLAN sub-interface validation
 
 **Objective:** Confirm that disabling a VLAN sub-interface actually blocks routed traffic to
 that segment, proving the routing observed in Tests 2–4 depends on the sub-interface being
@@ -468,8 +469,8 @@ name; only the correct one set to trunk, the other explicitly reset to access/un
 On RTR-SITE2, the MAC and switch name were filtered before running the command —
 correct on the first attempt.
 
-**Lesson:** When two objects share a generic name, use a unique identifier before making a
-targeted change, and verify the result immediately rather than assuming success.
+**Lesson:** When several adapters share the same display name, identify the intended adapter
+by MAC address or switch attachment before changing VLAN mode, then verify the result.
 
 ### Issue 2 — Standard Linux network config file didn't exist on a minimal install
 
@@ -484,40 +485,33 @@ default.
 
 **Fix:** Created the file fresh with the one required setting line, then applied it.
 
-**Lesson:** Confirm a target file actually exists before editing it, especially on
-minimal/stripped-down installs.
+**Lesson:** Minimal installs may not contain the same default files as a full installation.
+Check the actual filesystem before assuming a standard configuration file is present.
 
 ### Issue 3 — No internet access on the router blocked installing needed software
 
 **Where:** RTR-SITE1
 
-**Symptom:** The router needed the VLAN support package installed partway through setup,
-but its network connections are deliberately isolated (no internet path by design), so the
-install failed immediately trying to reach package servers.
+**Symptom:** The router needed a VLAN-related package during setup, but its lab-facing
+interfaces were intentionally isolated from the internet, so the install could not reach the
+package repositories.
 
 **Diagnosis path:**
-1. A temporary private switch with NAT was created as a reversible outbound path, and the
-   router was temporarily connected to it — but the temporary path also needed its own DNS
-   resolution, and the config file was first created under a mistyped name
-   (`resolve.conf` instead of `resolv.conf`), so the install continued to silently fail.
-2. While correcting this, focus briefly slipped to the terminal editor's save-filename
-   prompt, where the next intended command was typed directly into the filename field
-   instead of the editor body — caught immediately and re-confirmed before exiting.
-3. The mistyped `resolve.conf` file was identified as stray clutter once the real fix was
-   in place, and deleted.
+1. Created a temporary NAT-enabled switch and connected the router to it for outbound access.
+2. The temporary path still could not resolve package servers because the resolver file had
+   been created as `resolve.conf` instead of `resolv.conf`.
+3. Corrected the filename and confirmed DNS resolution before retrying the install.
 
-**Root cause:** Temporary internet access required a correctly-named DNS resolver config,
-and a filename typo (`resolve.conf` vs `resolv.conf`) silently broke resolution.
+**Root cause:** The isolated router had no normal internet path, and the temporary workaround
+also had a DNS configuration typo.
 
-**Fix:** Corrected the DNS config filename, confirmed the package install succeeded, then
-physically removed the temporary NAT connection so the router returned to full isolation as
-designed.
+**Fix:** Corrected the resolver configuration, completed the package install, then removed the
+temporary NAT connection so the router returned to the intended isolated design.
 
-**Lesson:** Isolated networks are a deliberate security choice — plan a temporary, reversible
-workaround in advance. When something should work but doesn't, double-check exact file
-naming before assuming the underlying logic is wrong. Terminal editors have distinct modes
-that are easy to lose track of when moving quickly; slow down at those transitions, and
-clean up debris from a caught mistake immediately.
+**Lesson:** For an isolated lab device, temporary outbound access should be added only when
+needed and removed afterward. If the path exists but name resolution still fails, verify the
+resolver configuration before changing the network design.
+
 
 ### Issue 4 — No default internet-connected virtual switch existed on this host
 
@@ -533,8 +527,8 @@ defaults as a typical Windows 10/11 desktop install.
 **Fix:** Checked what switches actually existed, then built the needed piece from scratch —
 created a new internal switch and configured NAT manually.
 
-**Lesson:** Don't assume a "usually there by default" component exists in every
-environment, especially cloud/hosted setups — check first, then act.
+**Lesson:** Hyper-V defaults differ between desktop and cloud-hosted Windows environments.
+Check the switches that actually exist on the host before planning around a default one.
 
 ### Issue 5 — YAML config file rejected due to inconsistent indentation
 
@@ -549,9 +543,8 @@ rejected the file with "inconsistent indentation."
 **Fix:** Deleted the broken file and retyped it, matching indentation levels against the
 known-working RTR-SITE1 file side by side.
 
-**Lesson:** Indentation-sensitive formats are unforgiving — verify alignment against a
-known-working example before saving, rather than debugging a vague rejection after the
-fact.
+**Lesson:** With YAML, compare indentation against a known-working file before applying the
+configuration. Small spacing errors can invalidate the whole file.
 
 ### Issue 6 — Typo: network address used instead of the actual gateway address
 
@@ -582,13 +575,9 @@ config was written over it.
 **Fix:** Identified the auto-generated leftover file, confirmed it was redundant, and removed
 it, leaving one authoritative config source for the interface.
 
-**Lesson:** Installers can leave behind auto-generated defaults even after a custom config is
-written — check for and clean up leftovers to avoid this class of conflict.
+**Lesson:** When replacing installer-generated network configuration, check for other files
+that still reference the same interface so only one active configuration remains.
 
-**Pattern across router configuration:** Issues 1, 5, 6, and 7 all trace back to the same root cause —
-assuming something was already in a known/clean state without explicitly verifying it. The
-fix was consistently the same: check the actual current state with a command, compare it
-against what it should be, then make the change.
 
 ### Issue 8 — Windows 11 Setup blocked by TPM requirement
 
@@ -640,10 +629,9 @@ oobe\bypassnro
 VM reboots automatically; OOBE restarts with a genuine "I don't have internet" option,
 allowing local account creation without network connectivity.
 
-Later builds (PC-S2-USERS) had the NIC attached from the start and applied this fix
-immediately on hitting the network screen, saving time versus re-attempting other
-workarounds. Not applicable to Windows Server (SRV-S1-SERVERS) — Server setup has no
-consumer OOBE network screen.
+The same bypass was used directly on PC-S2-USERS when it reached the OOBE network
+screen. SRV-S1-SERVERS did not require it because Windows Server setup does not use the same
+consumer OOBE flow.
 
 **Lesson:** Not every keyboard shortcut passes through a remote VM console cleanly — a
 host-level hotkey can silently intercept it. When a "standard" fix doesn't behave as
@@ -717,31 +705,38 @@ firewalls, ARP, or VLAN tagging.
 
 ### Issue 12 — Host memory ceiling reached when starting additional VMs
 
-**Where:** Host
+**Where:** Hyper-V host
 
-**Symptom:** Starting a 4th or 5th guest VM intermittently failed with "Not enough memory
-in the system to start the virtual machine... Could not initialize memory."
+**Symptom:** Starting a fourth or fifth guest sometimes failed with `Not enough memory in the
+system to start the virtual machine... Could not initialize memory.`
 
-**Root cause:** Limited headroom on the 16 GB host once host OS overhead, open
-applications, and multiple running guests' assigned memory were all accounted for.
+**Root cause:** The 16 GB host had limited headroom once the Windows Server host OS, open
+applications, and several guests were running at their configured startup memory.
 
-**Fix (situational, applied case-by-case):**
+**Fix (used as needed during Phase 1):**
+
 ```powershell
 Stop-VM -Name PC-S1-USERS -Force
 Set-VMMemory -VMName PC-S1-USERS -StartupBytes 2GB
 Start-VM -Name PC-S1-USERS
 ```
-Non-critical VMs' startup memory temporarily reduced where full allocation wasn't needed;
-VMs not required for the specific test being run were shut down, per the "VMs on/off per
-test" approach used throughout validation. This recurred more than once during validation and
-was handled the same way each time.
 
-**Lesson:** Test in pairs/subsets rather than running the full 6-VM matrix simultaneously.
-Memory allocations can be temporarily reduced below the design spec for lab/test purposes
-without affecting validation outcomes, then restored afterward if needed.
+Startup memory was reduced on non-critical guests when needed, and VMs that were not part of
+the current test were powered off.
 
-**Overall summary:** Across the router, end-device, and validation build steps, no issue required abandoning the original
-design — every fix was a configuration, sequencing, or environment-specific correction. The
-network topology, IP addressing plan, and VLAN scheme required no changes. The
-recurring theme across the whole build: verify the actual current state of a system before
-trusting an assumption about it.
+**Lesson:** Phase 1 validation had to account for the host's memory limit rather than assuming
+all guests could always start at their original allocations. Later phases moved to Dynamic
+Memory, and the final project state was validated with all seven VMs running together.
+
+
+## 8. Phase 1 Build Result
+
+Phase 1 finished with the original topology and addressing plan intact. The issues above were
+configuration, sequencing, or host-environment problems rather than design changes.
+
+All validation tests passed after correction, and the six Phase 1 VMs were checkpointed at the
+validated state.
+
+- [Back to Phase 1 design decisions](01-decisions.md)
+- [Phase 1 summary](03-phase-summary.md)
+- [Return to project README](../README.md)
