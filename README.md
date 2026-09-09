@@ -11,6 +11,13 @@ A complete, self-directed infrastructure lab built as a portfolio piece for entr
 
 This project documents a multi-site Windows + Linux environment that was designed, built, monitored, and hardened from scratch. It was never intended to be production infrastructure. It was built to prove practical skills, real troubleshooting ability, and clean documentation habits.
 
+## Quick Look
+
+- Designed and built a 2-site, VLAN-segmented network with static inter-site routing and router-level ACLs (default-deny)
+- Stood up a cross-platform Active Directory environment — Windows Server DC/DNS/DHCP plus a Linux domain member joined via SSSD
+- Deployed Zabbix monitoring across all 7 hosts with custom triggers, wired to ServiceNow for automatic incident creation
+- Hardened the environment with SSH key-only auth, service-account cleanup, and ITIL-style incident documentation
+
 The lab runs as nested virtualization on an Azure Hyper-V host and progresses through four deliberate phases:
 
 1. **Network** — routed multi-site topology with VLANs and 802.1Q trunking  
@@ -24,79 +31,9 @@ Every phase ends with verification evidence and an honest list of lab limitation
 
 ## Architecture
 
-```mermaid
-%%{init: {'flowchart': {'nodeSpacing': 60, 'rankSpacing': 55}}}%%
-flowchart LR
+![Network Topology](screenshots/topology.svg)
 
-    subgraph SITE1["SITE 1"]
-        direction TB
-
-        PC1["<b>PC-S1-USERS</b><br/>10.10.11.100 (DHCP)<br/>Windows Client<br/><font color='#285A9E'>VLAN 10 · domain-joined</font>"]
-
-        SRV1["<b>SRV-S1-SERVERS</b><br/>10.10.12.10 (static)<br/>Windows Server<br/><font color='#285A9E'>AD DS · DNS · DHCP · SMB<br/>domain time source</font>"]
-
-        MON["<b>MON-SRV</b><br/>10.10.12.20 (static)<br/>Ubuntu Server<br/><font color='#285A9E'>Zabbix 7.0 LTS · MySQL<br/>agents poll here</font>"]
-
-        VS1{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
-
-        R1["<b>RTR-SITE1</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.11.1<br/>VLAN 20: 10.10.12.1<br/>WAN: 10.10.0.1/30<br/><font color='#285A9E'>DHCP relay · ufw ACLs<br/>default deny routed</font>"]
-
-        PC1 -->|"VLAN 10"| VS1
-        SRV1 -->|"VLAN 20"| VS1
-        MON -->|"VLAN 20"| VS1
-        VS1 -->|"802.1Q Trunk"| R1
-    end
-
-    WAN[/"<b>WAN LINK</b><br/>10.10.0.0/30<br/>Static Routing<br/><font color='#285A9E'>latency + loss monitored</font>"/]
-
-    R1 -->|"10.10.0.1/30"| WAN
-    WAN -->|"10.10.0.2/30"| R2
-
-    subgraph SITE2["SITE 2"]
-        direction TB
-
-        R2["<b>RTR-SITE2</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.21.1<br/>VLAN 20: 10.10.22.1<br/>WAN: 10.10.0.2/30<br/><font color='#285A9E'>DHCP relay · ufw ACLs<br/>default deny routed</font>"]
-
-        VS2{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
-
-        PC2["<b>PC-S2-USERS</b><br/>10.10.21.100 (DHCP)<br/>Windows Client<br/><font color='#285A9E'>VLAN 10 · domain-joined</font>"]
-
-        SRV2["<b>SRV-S2-SERVERS</b><br/>10.10.22.10 (static)<br/>Ubuntu Server<br/><font color='#285A9E'>domain member (SSSD)<br/>Samba · chrony</font>"]
-
-        R2 -->|"802.1Q Trunk"| VS2
-        VS2 -->|"VLAN 10"| PC2
-        VS2 -->|"VLAN 20"| SRV2
-    end
-
-    %% Monitoring relationships (agents)
-    MON -.->|"agent"| R1
-    MON -.->|"agent"| R2
-    MON -.->|"agent"| SRV1
-    MON -.->|"agent"| SRV2
-    MON -.->|"agent"| PC1
-    MON -.->|"agent"| PC2
-
-    classDef endpoint fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef server fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef monitor fill:#F0F7FF,stroke:#285A9E,stroke-width:3px,color:#111827;
-    classDef switch fill:#EEF3F8,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef router fill:#F5F8FC,stroke:#183B63,stroke-width:3px,color:#111827;
-    classDef wan fill:#EDF4FF,stroke:#285A9E,stroke-width:2px,color:#111827;
-
-    class PC1,PC2 endpoint;
-    class SRV1,SRV2 server;
-    class MON monitor;
-    class VS1,VS2 switch;
-    class R1,R2 router;
-    class WAN wan;
-
-    style SITE1 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-    style SITE2 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-
-    linkStyle default stroke:#334155,stroke-width:2px
-```
-
-This is the final as-built state after all four phases. Every major service, the monitoring relationships, and the ACL boundaries are shown.
+*Final as-built topology across both sites, including VLAN segmentation and monitoring relationships.*
 
 **Final inventory (7 VMs)**
 
@@ -109,6 +46,10 @@ This is the final as-built state after all four phases. Every major service, the
 | PC-S2-USERS       | Windows 11          | Domain-joined client, DHCP via relay                     | 10.10.21.100 (DHCP)             |
 | SRV-S2-SERVERS    | Ubuntu Server       | Domain member (SSSD), Samba share, chrony                | 10.10.22.10 (static)            |
 | MON-SRV           | Ubuntu Server       | Zabbix 7.0 LTS + MySQL                                   | 10.10.12.20 (static)            |
+
+![Hyper-V Manager](screenshots/hyperv-manager.png)
+
+*All 7 VMs powered on and running in Hyper-V Manager.*
 
 Domain: `ans.local`  
 Addressing scheme: third octet encodes `{site}{vlan}` (e.g. 11 = Site 1 / VLAN 10)
@@ -137,6 +78,14 @@ Addressing scheme: third octet encodes `{site}{vlan}` (e.g. 11 = Site 1 / VLAN 1
 | Cross-platform administration (Win + Linux)| All phases    | Throughout |
 | Technical documentation & decision records | All phases    | Every `01-decisions.md` and `03-phase-summary.md` |
 
+![Zabbix Dashboard](screenshots/zabbix-dashboard.png)
+
+*All 7 hosts reporting healthy, confirming end-to-end agent coverage.*
+
+![ServiceNow Incidents](screenshots/servicenow-incidents.png)
+
+*Incidents auto-created in ServiceNow from Zabbix triggers.*
+
 ---
 
 ## Repository Structure
@@ -144,6 +93,11 @@ Addressing scheme: third octet encodes `{site}{vlan}` (e.g. 11 = Site 1 / VLAN 1
 ```
 /
 ├── README.md                          ← you are here
+├── screenshots/
+│   ├── hyperv-manager.png
+│   ├── servicenow-incidents.png
+│   ├── topology.svg
+│   └── zabbix-dashboard.png
 ├── phase1-network/
 │   ├── 01-decisions.md
 │   ├── 02-build-log.md
@@ -196,7 +150,7 @@ Key deliberate scope decisions (not oversights):
 - Static routing only (dynamic routing was a stretch goal left unimplemented)  
 - Site 2 depends on the WAN link for directory, DNS, and DHCP services  
 - Router ACLs are host/port allow-lists, not full Zero-Trust  
-- Temporary NAT adapters used during agent installs were left in place for continuity and are noted for cleanup
+- Temporary NAT adapters used during agent installs were left in place for continuity
 
 Full consolidated limitations and the complete service inventory live in `docs/final-handover.md`.
 
@@ -204,6 +158,6 @@ Full consolidated limitations and the complete service inventory live in `docs/f
 
 ## Why This Exists
 
-The project was built to answer a practical question: can someone who is still early in their career design a coherent multi-site environment, stand it up, monitor it, harden it, and document the whole process clearly enough that a technical interviewer can trust the work?
+This project was built to demonstrate the skills listed above through a real, working environment rather than a resume list — routing, directory services, monitoring, and hardening, each with design decisions and troubleshooting documented as they actually happened.
 
-The answer is in the phase folders.
+Feel free to reach out — [LinkedIn] · [email]
