@@ -303,7 +303,7 @@ sudo netplan apply
 Confirmed via `ip a` and `ip route` (`default via 10.10.22.1 dev eth0 proto static`). No
 firewall rule needed — Linux responds to ping by default.
 
-![SRV-S2-SERVERS netplan confirmed](screenshots/phase1-11-srvs2servers-netplan-confirmed.png)
+![SRV-S2-SERVERS netplan confirmed](screenshots/phase1-11-srvs2servers-netplan-confirm_ed.png)
 
 ```powershell
 Checkpoint-VM -Name SRV-S2-SERVERS -SnapshotName "SRV-S2-SERVERS - static-IP-confirmed"
@@ -337,7 +337,7 @@ ping -n 4 10.10.11.1
 
 **Result:** Passed, 0% loss.
 
-**Evidence:** ![PC-S1-USERS ping gateway](screenshots/phase1-12-test1-pcs1users-ping-gateway.png)
+**Evidence:** ![PC-S1-USERS ping gateway](screenshots/phase1-12-test1-pcs1users-ping-gateway_.png)
 
 #### Test 2 — Inter-VLAN routing within Site 1
 
@@ -352,7 +352,7 @@ ping -n 4 10.10.12.10
 RTR-SITE1 (see Issue 11). Fixed and retested: passed, 0% loss. RTR-SITE2 proactively
 checked and found already correctly enabled.
 
-**Evidence:** ![PC-S1-USERS ping SRV-S1-SERVERS](screenshots/phase1-13-test2-pcs1users-ping-srvs1servers.png)
+**Evidence:** ![PC-S1-USERS ping SRV-S1-SERVERS](screenshots/phase1-13-test2-pcs1users-ping-srvs1se_rvers.png)
 
 #### Test 3 — Cross-site routing over the WAN link, VLAN 10
 
@@ -365,7 +365,7 @@ ping -n 4 10.10.21.10
 
 **Result:** Passed, 0% loss.
 
-**Evidence:** ![PC-S1-USERS ping PC-S2-USERS](screenshots/phase1-14-test3-pcs1users-ping-pcs2users.png)
+**Evidence:** ![PC-S1-USERS ping PC-S2-USERS](screenshots/phase1-14-test3-pcs1users-ping-pcs2use_rs.png)
 
 #### Test 4 — Cross-site routing over the WAN link, VLAN 20
 
@@ -378,7 +378,7 @@ ping -n 4 10.10.22.10
 
 **Result:** Passed, 0% loss.
 
-**Evidence:** ![PC-S1-USERS ping SRV-S2-SERVERS](screenshots/phase1-15-test4-pcs1users-ping-srvs2servers.png)
+**Evidence:** ![PC-S1-USERS ping SRV-S2-SERVERS](screenshots/phase1-15-test4-pcs1users-ping-srvs2se_rvers.png)
 
 #### Test 5 — Path verification
 
@@ -392,7 +392,7 @@ tracert 10.10.22.10
 
 **Result:** 3 hops, matched expected path: `10.10.11.1 → 10.10.0.2 → 10.10.22.10`.
 
-**Evidence:** ![Tracert PC-S1-USERS to SRV-S2-SERVERS](screenshots/phase1-16-test5-tracert-pcs1users-to-srvs2servers.png)
+**Evidence:** ![Tracert PC-S1-USERS to SRV-S2-SERVERS](screenshots/phase1-16-test5-tracert-pcs1users-to-s_rvs2servers.png)
 
 #### Test 6 — VLAN sub-interface validation
 
@@ -414,7 +414,7 @@ sudo ip link set eth0.20 up
 **Result:** With the sub-interface down, ping correctly failed ("Destination net
 unreachable" from 10.10.11.1). Brought back up and retested: passed, 0% loss.
 
-**Evidence:** ![VLAN 20 disabled, ping fails](screenshots/phase1-17-test6-vlan20-down-ping-fail.png) ![VLAN 20 re-enabled, ping restored](screenshots/phase1-18-test6-vlan20-up-ping-restored.png)
+**Evidence:** ![VLAN 20 disabled, ping fails](screenshots/phase1-17-test6-vlan20-down-ping-fail.png) ![VLAN 20 re-enabled, ping restored](screenshots/phase1-18-test6-vlan20-up-ping-restore_d.png)
 
 ## 6. Final State
 
