@@ -1,203 +1,153 @@
 # Phase 1 — Network: Design & Decisions
 
-## 1. Objectives
+## 1. Phase Goal
 
-Phase 1 builds the routed network foundation for the whole project: multiple subnets
-connected through real router configuration and routing logic, the way it would work on
-physical/on-prem hardware — not relying on cloud-native routing shortcuts.
+Phase 1 establishes the network foundation for the rest of the lab. It connects two sites through a routed WAN link, separates Users and Servers into VLANs at each site, and uses Ubuntu routers for inter-VLAN and inter-site routing.
 
-What exists when this phase is complete:
+At the end of this phase, the lab has:
 
-- A network topology diagram (subnets, VLANs, routers, IP addressing scheme)
-- Working router configuration — inter-subnet routing plus VLAN trunking/sub-interfaces —
-  with verified end-to-end connectivity
-- Documentation covering design rationale, IP addressing plan, VLAN scheme, routing method,
-  and the tests used to prove it works
+- two sites connected through a point-to-point WAN link
+- separate Users and Servers VLANs at each site
+- 802.1Q trunking between the Hyper-V virtual switches and the Ubuntu routers
+- static routing between both sites
+- verified end-to-end connectivity across all four LAN subnets
+- a documented IP addressing and naming scheme
 
-No services (DNS, DHCP, file/print, etc.) are configured in this phase — those belong to
-Phase 2.
+DNS, DHCP, Active Directory, file sharing, and other server services are intentionally left for Phase 2.
 
-**How this supports later phases:**
+### How this supports later phases
 
-- Phase 2 (Servers) deploys onto the subnets built here
-- Phase 3 (Monitoring) watches the links/devices established here
-- Phase 4 (Security & Automation) layers firewalls, ACLs, and segmentation onto this
-  structure
+- **Phase 2 — Servers:** deploys Active Directory, DNS, DHCP, and file services onto the networks created here
+- **Phase 3 — Monitoring:** adds Zabbix monitoring to the same routers, servers, clients, and WAN path
+- **Phase 4 — Security:** adds router filtering, SSH hardening, and other security controls to the existing design
 
-**Skills demonstrated:** IP addressing/subnetting design, static routing (with dynamic
-routing as a stretch goal), VLAN segmentation and 802.1Q trunking, network troubleshooting
-and connectivity validation, cross-platform administration (Windows Server, Windows client,
-and Linux side by side), and technical documentation.
+### Main technical areas
 
-**Constraints:**
+IP addressing, subnetting, VLAN segmentation, 802.1Q trunking, Linux routing, static routes, Windows/Linux administration, connectivity testing, and technical documentation.
 
-- Cloud credits: VMs run only while actively being worked on
-- Hardware: nested virtualization limits how many VMs can run well at once
-- Time: scope was deliberately capped so it wouldn't creep into Phase 2 (DNS/DHCP explicitly
-  deferred)
+---
 
-## 2. Options Considered
+## 2. Design Options
 
 ### Hypervisor
 
-| Option | Pros | Cons |
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Hyper-V (chosen)** | Native to Windows Server; hosts both Windows and Linux guests; carries directly into Phase 2's Windows Server/AD work | Windows Server host VM costs more in licensing overhead |
-| KVM (Ubuntu host) | Cheaper, no licensing overhead | Doesn't set up Phase 2's Windows Server work |
-| VirtualBox | Easy GUI | Not built for server-style nested labs |
+| **Hyper-V — chosen** | Supports both Windows and Linux guests and carries directly into the later Windows Server phases | Requires a Windows Server host and nested virtualization support |
+| KVM on Ubuntu | Strong Linux virtualization option with no Windows host requirement | Less aligned with the Windows Server work planned for later phases |
+| VirtualBox | Simple desktop interface | Less suitable for the server-style nested lab design used here |
+
+Hyper-V was selected because the same host could support the Linux routing work in Phase 1 and the Windows Server environment added in Phase 2.
 
 ### Router OS
 
-| Option | Pros | Cons |
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Ubuntu Server (chosen)** | Real Linux routing skills (iproute2) transfer broadly; standard, expected choice for router/appliance duty | Not a router-specific CLI |
-| VyOS | Router-like CLI, closer to real network gear | New syntax for one-time use; less overlap with general admin skills |
+| **Ubuntu Server — chosen** | Uses standard Linux networking tools such as `iproute2`, supports VLAN sub-interfaces, and overlaps with general Linux administration | No router-specific CLI |
+| VyOS | Purpose-built routing interface and network-focused CLI | Adds a separate platform and syntax that would be used only for the routers |
 
-### End-Device / Server OS Mix
+Ubuntu Server was chosen so the routing configuration could also build Linux administration experience instead of introducing a separate router-only platform.
 
-| Option | Pros | Cons |
+### End-device and server mix
+
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| All Ubuntu | Cheapest, simplest, consistent | Doesn't demonstrate Windows admin skills at all |
-| **Mixed — Windows clients + split Windows/Linux servers (chosen)** | Proves both Windows and Linux administration; realistic (real users run Windows); the Windows Server device becomes the actual Phase 2 AD/DNS/DHCP box with no rebuild needed | Adds Windows guest licensing overhead on top of the Windows Server Hyper-V host |
-| Mixed but one Users-VLAN host on Ubuntu | Slightly cheaper | The Users VLAN isn't the tier being evaluated for OS variety — swapping it adds inconsistency without proving anything new |
+| All Ubuntu | Simple and consistent | Does not include Windows administration |
+| **Windows clients + Windows/Linux servers — chosen** | Covers both Windows and Linux administration and allows the Site 1 server to become the Phase 2 Domain Controller without rebuilding the lab | More resource usage than an all-Linux design |
+| Mixed environment with an Ubuntu user endpoint | Adds another Linux endpoint | Does not add much beyond the Linux server already included |
+
+The chosen mix keeps the user endpoints on Windows while using both Windows Server and Ubuntu Server on the Servers VLANs.
 
 ### Topology
 
-| Option | Pros | Cons |
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| Simple hub (1 router, 2 subnets) | Fastest to build | Least impressive, weak story |
-| Two-router simulated WAN link, flat LAN per site | Proves multi-hop routing | No segmentation within a site |
-| **Two-router WAN link + VLANs per site (chosen)** | Adds VLAN segmentation and 802.1Q trunking on top of multi-hop routing — both are core networking-fundamentals skills; sets up Phase 4's ACL-at-VLAN-boundary work | More VMs/setup; router config gets more involved (sub-interfaces) |
+| One router with two subnets | Fastest to build | No inter-site routing and limited segmentation |
+| Two routers with a flat LAN at each site | Adds a WAN path and multi-hop routing | No separation between users and servers |
+| **Two routers + WAN + VLANs at each site — chosen** | Provides inter-site routing and VLAN segmentation in the same design | Requires trunking and router sub-interface configuration |
 
-VLANs weren't strictly required to prove the core objective, but they were a low-cost
-addition — Hyper-V's virtual switch handles 802.1Q tagging natively, so no extra switch VMs
-were needed — that meaningfully strengthened the networking-fundamentals story without
-threatening the Phase 2–4 timeline.
+The final topology uses two routers, one point-to-point WAN link, and two VLANs per site. Hyper-V virtual switches carry the VLAN tags, so no additional switch VMs are required.
 
-**Sizing notes carried into the build:** nested virtualization requires an Intel-based VM
-size (Dv3/Ev3 or newer); AMD-based sizes don't support it. VM Security Type must be
-Standard, not Trusted Launch, since Trusted Launch is incompatible with nested
-virtualization.
+---
 
 ## 3. Final Design Decisions
 
-| Decision | Choice | Why |
+| Decision | Final Choice | Reason |
 |---|---|---|
-| Cloud platform | Azure | Local hardware couldn't handle nested virtualization; keeps continuity with Phase 2's Windows Server/AD work |
-| Hypervisor | Hyper-V | No extra licensing beyond the host; hosts both Windows and Linux guests for Phase 1 (Ubuntu) and Phase 2 (Windows Server) |
-| Host VM size | Standard D4s_v5 (4 vCPU / 16 GB RAM) planned | Enough headroom for host OS + nested VMs; Intel-based, confirmed nested-virtualization support. With 6 guests total, only the VMs actively under test were run at once |
-| Guest VM count | 6 (2 routers + 4 end devices — 2 per site, 1 per VLAN) | Minimum needed to prove both multi-hop routing and real VLAN segmentation — each VLAN needs its own device to test against |
-| Router OS | Ubuntu Server (both routers) | Standard, expected choice for routing duty; transferable Linux networking skills |
-| End-device OS mix | Windows client on both Users-VLAN devices; Windows Server on Site 1's Servers-VLAN device; Ubuntu Server on Site 2's Servers-VLAN device | Demonstrates managing both Windows and Linux servers; Windows client is the realistic choice for a Users VLAN; the Windows Server device carries straight into Phase 2's AD/DNS/DHCP work |
-| VLAN segmentation | 2 VLANs per site (Users / Servers), trunked via Hyper-V vSwitch | No extra switch VMs needed — Hyper-V's virtual switch natively supports 802.1Q tagging; routers get VLAN sub-interfaces (e.g. `eth0.10`, `eth0.20`) |
-| Routing method | Static routes first; dynamic routing considered a stretch goal (not implemented this phase) | Guarantees a working baseline before attempting anything more complex |
-| Services (DNS/DHCP/AD) | None this phase | Deferred to Phase 2 — the Servers VLAN is where those will land |
+| Cloud platform | Azure | Local hardware was not suitable for the nested lab, and Azure provided a host that could run Hyper-V |
+| Hypervisor | Hyper-V | Supports the Windows and Linux guest mix used throughout the project |
+| Host VM | Standard D4s v4, 4 vCPU / 16 GB RAM | This was the host used for the completed lab and supported nested virtualization |
+| Phase 1 guest count | 6 VMs | Two routers plus one Users and one Servers endpoint at each site |
+| Router OS | Ubuntu Server | Supports VLAN sub-interfaces, static routing, and standard Linux networking tools |
+| User endpoints | Windows clients | Matches the Windows user environment used in later phases |
+| Site 1 server | Windows Server | Carries forward into Phase 2 as the AD DS, DNS, and DHCP server |
+| Site 2 server | Ubuntu Server | Provides a Linux server for later domain join and Samba work |
+| VLANs | VLAN 10 — Users, VLAN 20 — Servers | Separates endpoint and server traffic at each site |
+| Routing | Static routes | Appropriate for the small two-router topology and easy to verify |
+| Server services | None in Phase 1 | AD DS, DNS, DHCP, and file services are added in Phase 2 |
 
-**Plan-vs-actual note:** the host was planned as Standard D4s_v5 but the deployed host
-actually came up as Standard D4s v4. Both are 4 vCPU / 16 GB RAM, Intel-based, and support
-nested virtualization, so the build wasn't affected — the discrepancy is only noted here for
-accuracy.
+### Host sizing note
 
-Naming convention used throughout the build (chosen to avoid confusion between the
-Hyper-V host machine and the lab's own "site" devices):
+The host was originally planned as `Standard D4s_v5`, but the deployed Azure VM was `Standard D4s v4`. Both provided 4 vCPU and 16 GB RAM, so the change did not affect the Phase 1 design.
 
-- `RTR-SITE1`, `RTR-SITE2` — routers (Ubuntu), each with a single trunked NIC plus one
-  untagged WAN NIC
-- `VLAN10-USERS`, `VLAN20-SERVERS` — the two VLANs at each site
-- `PC-S1-USERS` (Windows client), `SRV-S1-SERVERS` (Windows Server) — Site 1 end devices
-- `PC-S2-USERS` (Windows client), `SRV-S2-SERVERS` (Ubuntu Server) — Site 2 end devices
-- `WAN-LINK` — the router-to-router point-to-point link
+### Naming convention
 
-Three private Hyper-V virtual switches were used — one per site plus one for the WAN link:
+The device names identify both the role and the site:
+
+- `RTR-SITE1`, `RTR-SITE2` — Ubuntu routers
+- `PC-S1-USERS`, `PC-S2-USERS` — Windows user endpoints
+- `SRV-S1-SERVERS` — Site 1 Windows Server
+- `SRV-S2-SERVERS` — Site 2 Ubuntu Server
+- `VLAN10-USERS`, `VLAN20-SERVERS` — VLAN roles used at both sites
+- `WAN-LINK` — point-to-point router connection
+
+### Hyper-V virtual switches
 
 | Switch | Site | Purpose |
 |---|---|---|
-| `vSwitch-S1` | Site 1 | Trunked (VLANs 10 + 20), connects Site 1 end devices to `RTR-SITE1` |
-| `vSwitch-S2` | Site 2 | Trunked (VLANs 10 + 20), connects Site 2 end devices to `RTR-SITE2` |
-| `vSwitch-WAN` | — | Untagged, carries the `RTR-SITE1` ↔ `RTR-SITE2` point-to-point link |
+| `vSwitch-S1` | Site 1 | Trunk carrying VLANs 10 and 20 between Site 1 endpoints and `RTR-SITE1` |
+| `vSwitch-S2` | Site 2 | Trunk carrying VLANs 10 and 20 between Site 2 endpoints and `RTR-SITE2` |
+| `vSwitch-WAN` | — | Untagged point-to-point link between both routers |
 
-OS footprint: 3 Linux VMs (2 routers + 1 server) and 3 Windows VMs (2 clients + 1 server),
-plus the Windows Server Hyper-V host itself.
+Phase 1 uses three Linux guests and three Windows guests, in addition to the Windows Server Hyper-V host.
+
+---
 
 ## 4. IP Addressing Plan
 
-| Segment | Subnet | Router (gateway) | Device | OS |
+| Segment | Subnet | Gateway | Phase 1 Endpoint | OS |
 |---|---|---|---|---|
-| VLAN10-USERS, Site 1 | 10.10.11.0/24 | .11.1 | PC-S1-USERS — 10.10.11.10 | Windows client |
-| VLAN20-SERVERS, Site 1 | 10.10.12.0/24 | .12.1 | SRV-S1-SERVERS — 10.10.12.10 | Windows Server |
-| WAN-LINK | 10.10.0.0/30 | RTR-SITE1 .1, RTR-SITE2 .2 | — | Ubuntu (both routers) |
-| VLAN10-USERS, Site 2 | 10.10.21.0/24 | .21.1 | PC-S2-USERS — 10.10.21.10 | Windows client |
-| VLAN20-SERVERS, Site 2 | 10.10.22.0/24 | .22.1 | SRV-S2-SERVERS — 10.10.22.10 | Ubuntu Server |
+| VLAN 10 — Users, Site 1 | 10.10.11.0/24 | 10.10.11.1 | PC-S1-USERS — 10.10.11.10 | Windows client |
+| VLAN 20 — Servers, Site 1 | 10.10.12.0/24 | 10.10.12.1 | SRV-S1-SERVERS — 10.10.12.10 | Windows Server |
+| WAN link | 10.10.0.0/30 | — | RTR-SITE1 — 10.10.0.1 / RTR-SITE2 — 10.10.0.2 | Ubuntu routers |
+| VLAN 10 — Users, Site 2 | 10.10.21.0/24 | 10.10.21.1 | PC-S2-USERS — 10.10.21.10 | Windows client |
+| VLAN 20 — Servers, Site 2 | 10.10.22.0/24 | 10.10.22.1 | SRV-S2-SERVERS — 10.10.22.10 | Ubuntu Server |
 
-**Why this scheme:** the third octet encodes `{site}{vlan}` — e.g. `11` is Site 1/VLAN10,
-`22` is Site 2/VLAN20 — so any address indicates exactly where it sits at a glance. A `/24`
-per VLAN leaves room to grow; a `/30` on the WAN link is standard practice for a
-point-to-point link.
+The third octet follows a `{site}{vlan}` pattern:
 
-## 5. Topology Diagram
+- `11` = Site 1 / VLAN 10
+- `12` = Site 1 / VLAN 20
+- `21` = Site 2 / VLAN 10
+- `22` = Site 2 / VLAN 20
 
-```mermaid
-%%{init: {'flowchart': {'nodeSpacing': 60, 'rankSpacing': 55}}}%%
-flowchart LR
+This makes the location and VLAN easy to identify from the address. `/24` networks are used for the LAN VLANs, while the WAN uses a `/30` point-to-point subnet.
 
-    subgraph SITE1["SITE 1"]
-        direction TB
+> **Phase 1 addressing note:** The Windows clients use static `.10` addresses during this phase. In Phase 2, DHCP is introduced and the client addresses move into the `.100–200` DHCP scopes.
 
-        PC1["<b>PC-S1-USERS</b><br/>10.10.11.10<br/>Windows Client<br/><font color='#285A9E'>VLAN 10 (Users)</font>"]
+---
 
-        SRV1["<b>SRV-S1-SERVERS</b><br/>10.10.12.10<br/>Windows Server<br/><font color='#285A9E'>VLAN 20 (Servers)</font>"]
+## 5. Phase 1 Topology
 
-        VS1{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
+![Phase 1 Network Topology](screenshots/Phase1_Topology.svg)
 
-        R1["<b>RTR-SITE1</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.11.1<br/>VLAN 20: 10.10.12.1<br/><font color='#285A9E'>WAN: 10.10.0.1/30</font>"]
+*Phase 1 topology showing both sites, VLAN 10 and VLAN 20, the Hyper-V trunks, and the routed WAN link.*
 
-        PC1 -->|"VLAN 10"| VS1
-        SRV1 -->|"VLAN 20"| VS1
-        VS1 -->|"802.1Q Trunk"| R1
-    end
+---
 
-    WAN[/"<b>WAN LINK</b><br/>10.10.0.0/30<br/>Static Routing"/]
+## 6. Phase 1 Outcome
 
-    R1 -->|"10.10.0.1/30"| WAN
-    WAN -->|"10.10.0.2/30"| R2
+Phase 1 finished with both sites routed successfully across the WAN link. VLAN 10 and VLAN 20 were separated at each site, router sub-interfaces handled inter-VLAN routing, and static routes provided connectivity between the four LAN subnets.
 
-    subgraph SITE2["SITE 2"]
-        direction TB
+The configuration steps and validation results are documented in [02-build-log.md](02-build-log.md).
 
-        R2["<b>RTR-SITE2</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.21.1<br/>VLAN 20: 10.10.22.1<br/><font color='#285A9E'>WAN: 10.10.0.2/30</font>"]
-
-        VS2{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
-
-        PC2["<b>PC-S2-USERS</b><br/>10.10.21.10<br/>Windows Client<br/><font color='#285A9E'>VLAN 10 (Users)</font>"]
-
-        SRV2["<b>SRV-S2-SERVERS</b><br/>10.10.22.10<br/>Ubuntu Server<br/><font color='#285A9E'>VLAN 20 (Servers)</font>"]
-
-        R2 -->|"802.1Q Trunk"| VS2
-        VS2 -->|"VLAN 10"| PC2
-        VS2 -->|"VLAN 20"| SRV2
-    end
-
-    classDef endpoint fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef server fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef switch fill:#EEF3F8,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef router fill:#F5F8FC,stroke:#183B63,stroke-width:3px,color:#111827;
-    classDef wan fill:#EDF4FF,stroke:#285A9E,stroke-width:2px,color:#111827;
-
-    class PC1,PC2 endpoint;
-    class SRV1,SRV2 server;
-    class VS1,VS2 switch;
-    class R1,R2 router;
-    class WAN wan;
-
-    style SITE1 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-    style SITE2 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-
-    linkStyle default stroke:#334155,stroke-width:2px
-```
-
-## 6. Status
-
-- Step 1 — Understand the goal — done
-- Step 2 — Research options — done
-- Step 3 — Make decisions — done
-- Step 4 — Build (see `02-build-log.md`)
+A shorter summary of the completed phase is available in [03-phase-summary.md](03-phase-summary.md).
