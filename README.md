@@ -19,7 +19,7 @@ The documentation includes the design choices, configuration steps, verification
 - Configured Windows Server 2022 for Active Directory Domain Services, DNS, and DHCP, with Windows clients and a Linux server joined to the domain
 - Set up cross-platform file sharing with Samba and Active Directory group-based access
 - Deployed Zabbix 7.0 LTS across all 7 lab VMs, including custom service and network monitoring
-- Integrated Zabbix with ServiceNow through REST for automatic incident creation
+- Integrated Zabbix monitoring with ServiceNow through REST for incident creation and tracking
 - Added SSH key-only authentication, default-deny router rules, service-account cleanup, and ServiceNow incident documentation
 
 ---
@@ -67,7 +67,7 @@ Added Active Directory Domain Services, AD-integrated DNS, centralized DHCP, tim
 
 ### Phase 3 — Monitoring
 
-Deployed Zabbix 7.0 LTS across the lab and added monitoring for host availability, core services, DHCP, DNS, WAN latency and packet loss. Zabbix was also integrated with ServiceNow through REST for automatic incident creation.
+Deployed Zabbix 7.0 LTS across the lab and added monitoring for host availability, core services, DHCP, DNS, WAN latency and packet loss. Zabbix was also integrated with ServiceNow through REST for incident creation and tracking.
 
 [Design decisions](phase3-monitoring/01-decisions.md) · [Build log](phase3-monitoring/02-build-log.md) · [Phase summary](phase3-monitoring/03-phase-summary.md)
 
@@ -95,7 +95,7 @@ Hardened the environment with router allow-lists and default-deny rules, SSH key
 | Windows Server | Active Directory Domain Services, AD-integrated DNS, DHCP, SMB, domain time |
 | Linux Administration | Ubuntu Server, realmd/SSSD, Kerberos, Samba, chrony, SSH |
 | Monitoring | Zabbix 7.0 LTS, agents, custom items and triggers, service checks, WAN latency and packet loss |
-| ServiceNow | REST integration for Zabbix-triggered incidents, incident documentation and resolution |
+| ServiceNow | REST integration for monitoring incidents, incident documentation and resolution |
 | Security | UFW allow-lists, default-deny routing policy, SSH key authentication, service-account cleanup |
 | Virtualization | Azure-hosted Hyper-V, nested virtualization, virtual switches, VLAN trunking, Dynamic Memory |
 | Documentation | Design decisions, build logs, verification evidence, troubleshooting, final handover |
