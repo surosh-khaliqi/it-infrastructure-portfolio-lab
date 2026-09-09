@@ -1,186 +1,169 @@
-# Phase 4 — Security & Automation: Design & Decisions
+# Phase 4 — Security: Design & Decisions
 
 ## 1. Objectives
 
-Phase 4 hardens the environment built in Phases 1–3 and demonstrates a basic security-operations workflow. The work has two parallel tracks:
-
-1. **Security hardening** — restrict inter-VLAN and inter-site traffic to an explicit allow-list on both routers, remediate high-risk service-account grants, enforce key-only SSH on at least one infrastructure host, and close the most obvious gaps found by a full port audit.
-2. **Operations / ITIL practice** — capture every real fault that appeared during the hardening work as a tracked ServiceNow incident (or problem/change analogue), with chronological work notes and an explicit root-cause / resolution split.
+Phase 4 hardens the environment built in Phases 1–3 without changing the existing topology or addressing scheme. The focus is on restricting routed traffic, correcting security findings discovered during the audit, hardening administrative access, and confirming that the services built in earlier phases still work after the changes.
 
 What exists when this phase is complete:
 
-- Both routers enforce a default-deny routed policy plus an explicit allow-list covering AD-core (TCP + UDP), Samba, Zabbix, SSH from MON-SRV, and the DHCP-relay reply path
-- Domain Controller Windows Update service restored to Automatic/Running and account lockout policy set to a non-zero threshold
-- Undocumented passwordless sudo grant for the zabbix service account removed
-- SSH key-only authentication live on RTR-SITE1 (password auth rejected)
-- Five ServiceNow tickets written, worked, and resolved with full evidence
-- Documentation of the design choices, the ACL gaps that were discovered the hard way, and the validation that the hardened posture still permits the services Phase 2 and 3 rely on
+- Both Ubuntu routers enforce `default deny routed` with explicit `ufw route` allow rules for required lab traffic
+- Required Active Directory, DHCP relay, Samba, Zabbix, and management SSH paths remain available through the router allow-lists
+- `RTR-SITE1` uses SSH key authentication with password authentication disabled
+- The Domain Controller Windows Update service is restored to Automatic/Running
+- The domain account lockout threshold is set to 5
+- An undocumented passwordless sudo grant for the `zabbix` service account is removed
+- The unused MySQL X Protocol listener on `MON-SRV` is disabled
+- Significant findings and configuration changes are documented and resolved in ServiceNow
+- Phase 2 and Phase 3 service paths are re-tested after the security changes
 
-No full Zero-Trust redesign, no Group Policy objects, and no automated remediation scripts are in scope — those would be natural extensions, not part of this phase.
+### Main technical areas
 
-**How this closes the project:**
+- Routed UFW allow-lists and default-deny forwarding
+- Active Directory and DHCP-aware ACL design
+- SSH key-only authentication
+- Windows domain-policy and service review
+- Linux service-account privilege cleanup
+- Open-port review and service reduction
+- ServiceNow incident documentation
+- Post-hardening validation
 
-- The monitoring baseline from Phase 3 now sits behind real network controls, so a future change that breaks a service should still appear on the dashboard.
-- The ServiceNow tickets give a concrete example of turning lab findings into an auditable operations record.
+### Constraints
 
-**Skills demonstrated:** network ACL design and troubleshooting (including relay-aware rules), service-account hygiene, SSH hardening with cloud-init awareness, Windows domain policy basics, structured incident documentation, and continued cross-platform administration.
+- The lab remains on the same resource-constrained Azure Hyper-V host, so selective VM power-on is still used when necessary.
+- Security controls must preserve the AD, DNS, DHCP, file-sharing, SSH, and Zabbix paths established in earlier phases.
+- No new devices, VLANs, or IP addresses are introduced in Phase 4.
+- ServiceNow records are stored in the Incident table; type prefixes are used where a finding represents a problem or change rather than a normal incident.
 
-**Constraints:**
-
-- Same nested-host memory limits; selective power-on remains necessary.
-- Router ACLs must not break the Phase 2 services (AD authentication, DHCP, file shares) or the Phase 3 monitoring paths.
-- ServiceNow Personal Developer Instance has no Problem or Change modules activated — all tickets live in the Incident table with bracketed type prefixes for clarity.
+---
 
 ## 2. Options Considered
 
-### Router traffic-control method
+### Router traffic control
 
-| Option | Pros | Cons |
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **ufw route allow-list + default deny routed (chosen)** | Already present on the Ubuntu routers; simple syntax; easy to verify with `ufw status numbered` | Less granular than raw iptables; requires careful testing of every protocol the lab actually uses |
-| Raw iptables / nftables | Full control | Steeper learning curve for the same end result; harder to keep consistent across two routers |
-| Leave routing fully open | Zero risk of breaking services | Leaves the multi-VLAN design with no enforcement — weakens the Phase 1 segmentation story |
+| **UFW route allow-list + default-deny forwarding (chosen)** | Uses the firewall already present on both Ubuntu routers; readable rules; straightforward verification with `ufw status numbered` | Requires every required routed flow to be identified and tested |
+| Raw iptables / nftables | More granular control | More configuration complexity than needed for this lab |
+| Leave routed traffic unrestricted | Lowest risk of initially breaking services | Provides no enforcement between routed VLANs and sites |
 
-### Scope of the allow-list
+UFW route rules were selected because they could enforce traffic at the routing boundary while remaining consistent with the Linux tooling already used in the lab.
 
-| Option | Pros | Cons |
+### Allow-list scope
+
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Explicit service ports only (chosen)** | Least privilege; forces the builder to understand which ports AD, DHCP, Samba and Zabbix actually need | Easy to miss UDP or reply-path addresses (exactly what happened) |
-| Broad “any from Users VLANs to Servers VLAN” | Faster to implement | Defeats the purpose of an allow-list |
-| Host-based firewalls only | No router changes | Does not demonstrate inter-VLAN control at the routing boundary |
+| **Permit only required service flows (chosen)** | Limits routed access to the services the environment actually uses | Missing protocols or reply paths can interrupt valid traffic |
+| Broad Users-to-Servers allow rules | Simpler implementation | Allows more traffic than the services require |
+| Host firewalls only | No router ACL changes | Does not control traffic at the inter-VLAN or inter-site routing boundary |
+
+The allow-list is based on required application flows rather than broad subnet-to-subnet access.
 
 ### SSH authentication
 
-| Option | Pros | Cons |
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Key-only on RTR-SITE1 first (chosen)** | Proves the pattern without locking every host at once; leaves a password path on other hosts as a safety net during testing | Incomplete coverage until rolled out further |
-| Key-only on all Linux hosts immediately | Stronger end state | Higher risk of lock-out during the learning curve |
-| Leave password authentication | Zero lock-out risk | Leaves the most common remote-access vector open |
+| **Key-only authentication on `RTR-SITE1` (chosen)** | Removes password authentication on one infrastructure host while allowing the configuration to be validated safely | Other Linux hosts retain their existing authentication configuration |
+| Key-only authentication on every Linux host at once | Wider immediate coverage | Greater risk of losing administrative access during configuration |
+| Keep password authentication everywhere | No migration work | Leaves password-based SSH enabled on all infrastructure hosts |
 
-### Service-account and policy hardening
+`RTR-SITE1` was used as the hardening target so the key-only configuration and cloud-init behavior could be verified without changing every Linux host at the same time.
 
-| Option | Pros | Cons |
+### Audit-remediation scope
+
+| Option | Advantages | Trade-offs |
 |---|---|---|
-| **Remediate only the findings that were clearly high-risk or clearly broken (chosen)** | Matches the actual audit results; avoids inventing work | Does not produce a full CIS-style baseline |
-| Full CIS / STIG pass on every host | Comprehensive | Far beyond the time and scope of a single phase |
+| **Remediate confirmed security findings from the audit (chosen)** | Keeps the phase tied to observed conditions in the lab | Does not attempt a full security-baseline framework |
+| Full CIS/STIG-style hardening across every host | Broader control coverage | Outside the scope and time available for this phase |
+
+The audit focused on open ports, running services, administrative privileges, SSH configuration, Windows update state, and domain lockout policy. Findings were remediated when they were clearly unnecessary or insecure.
+
+---
 
 ## 3. Final Design Decisions
 
-| Decision | Choice | Why |
+| Decision | Final Choice | Reason |
 |---|---|---|
-| Traffic control mechanism | `ufw` route rules + `default deny routed` on both routers | Already installed; consistent with the Linux tooling used in prior phases |
-| Allow-list contents | AD-core (88, 389, 445, 464, 636, 3268, 3269 TCP + UDP), Samba (139/445), Zabbix (10050/10051 both directions), SSH from MON-SRV, DHCP reply path to the VLAN gateways | Exactly the services the lab depends on; anything else is denied by default |
-| SSH hardening target | RTR-SITE1 only for this phase | Proves key-only auth and surfaces the cloud-init drop-in issue without risking simultaneous lock-out of every infrastructure host |
-| DC hardening | Restore `wuauserv` to Automatic/Running; set LockoutThreshold = 5 | Closes the two clearest policy gaps found by the audit |
-| zabbix sudoers entry | Disable (rename out of `/etc/sudoers.d/`) | Passwordless root-equivalent nmap for a service account with no active use case is unnecessary risk |
-| ITIL documentation | Five Incident-table tickets with explicit [Problem] / [Change] prefixes | ServiceNow PDI lacks Problem and Change modules; the prefix keeps the intended classification visible |
-| Validation approach | Re-test the Phase 2 and Phase 3 critical paths (DHCP, AD auth, file share, Zabbix agents, SSH) after every ACL change | Prevents “hardened but broken” outcomes |
+| Routed traffic policy | `ufw default deny routed` on both routers | Makes routed traffic deny-by-default instead of fully open |
+| ACL model | Explicit rules for required AD, DHCP relay, Samba, Zabbix, and management SSH flows | Preserves required services while restricting unrelated routed traffic |
+| AD traffic | Required TCP AD ports plus UDP 88, 389, and 464 where needed | The initial TCP-only rules broke Site 2 domain operations |
+| DHCP relay return traffic | UDP 67 from `SRV-S1-SERVERS` to the VLAN gateway addresses | DHCP relay replies are addressed to the relay `giaddr`, not the WAN interface |
+| SSH hardening target | `RTR-SITE1` | Allows key-only authentication to be implemented and verified on one infrastructure host |
+| SSH effective configuration | Main `sshd_config` plus cloud-init drop-in checked with `sshd -T` | The cloud-init drop-in overrode the first password-authentication change |
+| Domain Controller service state | `wuauserv` Automatic/Running | Corrects the stopped Windows Update service found during the audit |
+| Domain lockout policy | `LockoutThreshold = 5` | Replaces the previous zero-lockout configuration |
+| Zabbix service-account privilege | Remove the undocumented `NOPASSWD` sudoers grant | No active Zabbix function required the root-equivalent `nmap` privilege |
+| MySQL X Protocol | Disabled on `MON-SRV` | Port 33060 was open but unused by Zabbix or other lab services |
+| ServiceNow documentation | Five records documenting significant findings and changes | Keeps troubleshooting, root cause, work notes, and resolution tied to the security work |
+| Validation | Re-test critical Phase 2 and Phase 3 paths after ACL and hardening changes | Confirms the security controls do not break required services |
 
-**Plan-vs-actual notes:**
+### Plan-vs-actual notes
 
-- The first ACL allow-list covered only TCP for AD-core services. Site 2 immediately lost DHCP and domain authentication because CLDAP (UDP 389) and Kerberos (UDP 88) were missing, and the DHCP-relay reply path (giaddr = VLAN gateway, not WAN address) was also missing. Both gaps were diagnosed and closed in the same session.
-- Editing `/etc/ssh/sshd_config` alone did not disable password authentication; a cloud-init drop-in (`50-cloud-init.conf`) overrode it. Effective settings had to be verified with `sshd -T` and the drop-in itself edited.
-- A stale TempNAT A record (192.168.100.20) left over from Phase 3 was still registered against both the domain root and the DC host name; it was cleaned up while verifying the ACL fixes.
+- The first router allow-list included TCP rules for the required AD services but missed required UDP traffic. Site 2 domain operations failed until UDP 88, 389, and 464 were added.
+- DHCP still failed after the AD UDP correction because the relay reply path was not permitted. The final ACL allows UDP 67 from `SRV-S1-SERVERS` to the Site 1 and Site 2 VLAN gateway addresses.
+- Editing `/etc/ssh/sshd_config` alone did not disable password authentication on `RTR-SITE1`. `/etc/ssh/sshd_config.d/50-cloud-init.conf` still enabled it, so the effective configuration was verified with `sshd -T` and the drop-in was corrected.
+- A stale TempNAT DNS record from Phase 3 was found while validating the ACL changes and removed.
+- The audit found MySQL X Protocol listening on TCP 33060 on `MON-SRV`; it was not required and was disabled.
 
-## 4. Naming & Addressing
+---
 
-No new devices or IP addresses were introduced. All existing names and the Phase 1–3 addressing scheme remain unchanged.
+## 4. Security Controls & Documentation
 
-**ACL rule naming convention (for documentation only):** rules are described by source subnet → destination host:port rather than by ufw rule numbers, because rule numbers shift when rules are inserted or deleted.
+### Router controls
 
-**ServiceNow ticket references used in this phase:**
+Both routers retain the existing Phase 1 routing design but now enforce routed traffic through explicit UFW rules.
 
-| Ticket | Intended type | Short description (abridged) |
-|---|---|---|
-| INC0010003 | Incident | Site 2 clients lost DHCP / AD after ACL |
-| INC0010004 | Problem | DC Windows Update service disabled (~4 years) |
-| INC0010005 | Problem/Security | Undocumented zabbix sudoers NOPASSWD entry |
-| INC0010006 | Incident | SRV-S2-SERVERS kernel deadlock during scan |
-| INC0010007 | Change | SSH key-based authentication on infrastructure host |
+The final rules permit the traffic required for:
 
-(Exact ticket numbers are those generated by the lab’s ServiceNow instance; they are retained for traceability inside the build log.)
+- Active Directory authentication and directory access
+- DHCP relay and its return path
+- SMB/Samba file sharing
+- Zabbix monitoring
+- SSH from `MON-SRV` to the infrastructure hosts
+
+Traffic that does not match an allow rule is denied by the routed default policy.
+
+Exact commands and rule verification are recorded in [`02-build-log.md`](02-build-log.md).
+
+### Host and account hardening
+
+| System | Change |
+|---|---|
+| `RTR-SITE1` | SSH key authentication enabled; password authentication disabled and verified |
+| `SRV-S1-SERVERS` | Windows Update service restored to Automatic/Running |
+| `ans.local` domain | Account lockout threshold set to 5 |
+| `MON-SRV` | Undocumented Zabbix `NOPASSWD` sudoers grant removed |
+| `MON-SRV` | Unused MySQL X Protocol listener disabled |
+
+### ServiceNow records
+
+ServiceNow was used to document significant findings and changes from the phase, including:
+
+- the Site 2 DHCP/AD outage caused by the first ACL revision
+- the Domain Controller Windows Update finding
+- the undocumented Zabbix sudoers grant
+- the `SRV-S2-SERVERS` kernel deadlock encountered during scanning
+- the SSH key-authentication change on `RTR-SITE1`
+
+The ticket numbers, work notes, screenshots, and resolution evidence remain in [`02-build-log.md`](02-build-log.md).
+
+No new device names or IP addresses were introduced in this phase.
+
+---
 
 ## 5. Topology Diagram
 
-The diagram shows the Phase 3 end state with the new security boundaries annotated. Prior network and monitoring layout stays plain; only the ACL-controlled paths receive detail.
+![Phase 4 Security Topology](screenshots/Phase4_Topology.svg)
 
-```mermaid
-%%{init: {'flowchart': {'nodeSpacing': 60, 'rankSpacing': 55}}}%%
-flowchart LR
+The Phase 4 diagram keeps the Phase 3 infrastructure and monitoring layout unchanged while adding the router security boundaries introduced in this phase. Both routers now enforce explicit routed allow-lists with a default-deny forwarding policy; the required monitoring and service paths remain available through those controls.
 
-    subgraph SITE1["SITE 1"]
-        direction TB
+---
 
-        PC1["<b>PC-S1-USERS</b><br/>10.10.11.100 (DHCP)<br/>Windows Client<br/>domain-joined"]
+## 6. Completed Outcome
 
-        SRV1["<b>SRV-S1-SERVERS</b><br/>10.10.12.10 (static)<br/>Windows Server<br/>AD DS · DNS · DHCP · SMB"]
+Phase 4 completed the security-hardening layer for the existing seven-VM environment. Routed traffic is restricted by explicit allow-lists, key-only SSH is active on `RTR-SITE1`, identified service and privilege findings were corrected, and the earlier AD, DHCP, file-sharing, and monitoring paths were re-tested under the hardened configuration.
 
-        MON["<b>MON-SRV</b><br/>10.10.12.20 (static)<br/>Ubuntu Server<br/>Zabbix 7.0 LTS<br/>MySQL · agents poll here"]
+Detailed commands, screenshots, validation results, ServiceNow records, and troubleshooting are in [`02-build-log.md`](02-build-log.md). A shorter completed-state view is in [`03-phase-summary.md`](03-phase-summary.md).
 
-        VS1{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
+---
 
-        R1["<b>RTR-SITE1</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.11.1<br/>VLAN 20: 10.10.12.1<br/>WAN: 10.10.0.1/30<br/><font color='#285A9E'>ufw route allow-list<br/>default deny routed</font>"]
-
-        PC1 -->|"VLAN 10"| VS1
-        SRV1 -->|"VLAN 20"| VS1
-        MON -->|"VLAN 20"| VS1
-        VS1 -->|"802.1Q Trunk"| R1
-    end
-
-    WAN[/"<b>WAN LINK</b><br/>10.10.0.0/30"/]
-
-    R1 -->|"10.10.0.1/30"| WAN
-    WAN -->|"10.10.0.2/30"| R2
-
-    subgraph SITE2["SITE 2"]
-        direction TB
-
-        R2["<b>RTR-SITE2</b><br/>Ubuntu Router<br/>VLAN 10: 10.10.21.1<br/>VLAN 20: 10.10.22.1<br/>WAN: 10.10.0.2/30<br/><font color='#285A9E'>ufw route allow-list<br/>default deny routed</font>"]
-
-        VS2{{"<b>Hyper-V vSwitch</b><br/>802.1Q TRUNK"}}
-
-        PC2["<b>PC-S2-USERS</b><br/>10.10.21.100 (DHCP)<br/>Windows Client<br/>domain-joined"]
-
-        SRV2["<b>SRV-S2-SERVERS</b><br/>10.10.22.10 (static)<br/>Ubuntu Server<br/>domain member · Samba · chrony"]
-
-        R2 -->|"802.1Q Trunk"| VS2
-        VS2 -->|"VLAN 10"| PC2
-        VS2 -->|"VLAN 20"| SRV2
-    end
-
-    %% Monitoring relationships (from Phase 3)
-    MON -.->|"agent"| R1
-    MON -.->|"agent"| R2
-    MON -.->|"agent"| SRV1
-    MON -.->|"agent"| SRV2
-    MON -.->|"agent"| PC1
-    MON -.->|"agent"| PC2
-
-    classDef endpoint fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef server fill:#FFFFFF,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef monitor fill:#F0F7FF,stroke:#285A9E,stroke-width:3px,color:#111827;
-    classDef switch fill:#EEF3F8,stroke:#243B5A,stroke-width:2px,color:#111827;
-    classDef router fill:#F5F8FC,stroke:#183B63,stroke-width:3px,color:#111827;
-    classDef wan fill:#EDF4FF,stroke:#285A9E,stroke-width:2px,color:#111827;
-
-    class PC1,PC2 endpoint;
-    class SRV1,SRV2 server;
-    class MON monitor;
-    class VS1,VS2 switch;
-    class R1,R2 router;
-    class WAN wan;
-
-    style SITE1 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-    style SITE2 fill:#FFFFFF,stroke:#243B5A,stroke-width:2px
-
-    linkStyle default stroke:#334155,stroke-width:2px
-```
-
-Both routers now enforce an explicit allow-list for inter-VLAN and inter-site traffic. Only the ports required by AD, DHCP relay, Samba, Zabbix and management SSH are permitted; everything else is denied by the default routed policy. Monitoring agent relationships from Phase 3 remain unchanged.
-
-## 6. Status
-
-- Step 1 — Understand the goal — done
-- Step 2 — Research options — done
-- Step 3 — Make decisions — done
-- Step 4 — Build (see `02-build-log.md`)
+[← Main README](../README.md) · [02 — Build Log](02-build-log.md) · [03 — Phase Summary](03-phase-summary.md)
