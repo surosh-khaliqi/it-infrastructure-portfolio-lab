@@ -1,6 +1,6 @@
-# Phase 4 — Security & Automation: Build Log
+# Phase 4 — Security: Build Log
 
-Environment and design rationale are covered in `01-decisions.md`. This document is the as-executed build: audit findings, ACL implementation, hardening steps, and the issues that appeared along the way.
+Environment and design rationale are covered in [`01-decisions.md`](01-decisions.md). This document is the as-executed build: audit findings, ACL implementation, hardening steps, and the issues that appeared along the way.
 
 ## 1. Environment & Prerequisites (recap)
 
@@ -16,7 +16,7 @@ Seven VMs on the same Azure Hyper-V host used in Phases 1–3. No new devices or
 | SRV-S2-SERVERS | Ubuntu (Samba) | 10.10.22.10 | VLAN 20, Site 2 |
 | MON-SRV | Ubuntu Server (Zabbix) | 10.10.12.20 | VLAN 20, Site 1 |
 
-Baseline checkpoint `pre-phase4-audit-baseline` taken on all seven VMs before any changes. Phase 3 known limitations (ip_forward persistence, SSSD dynamic DNS, dcdiag DFSREvent) re-read and carried forward.
+Baseline checkpoint `pre-phase4-audit-baseline` taken on all seven VMs before any changes. Phase 3 known conditions and earlier issues were reviewed before hardening, including SSSD dynamic DNS behavior and the `dcdiag` DFSREvent finding; the permanent router `ip_forward` / UFW sysctl fix was already in place.
 
 ## 2. Part A — Pre-Work
 
@@ -80,13 +80,13 @@ Key observations:
 
 - Routers and SRV-S2-SERVERS still had default SSH password authentication enabled.
 - MON-SRV contained an undocumented `/etc/sudoers.d/zabbix` entry granting the zabbix service account passwordless sudo for `nmap -O *` (file dated 2018, pre-dates the lab).
-- SRV-S1-SERVERS (DC) showed only three hotfixes from March 2022 and LockoutThreshold = 0.
+- SRV-S1-SERVERS (DC) showed only three hotfix entries from March 2022 in `Get-HotFix`, and `LockoutThreshold = 0`.
 - Port 5040 on both Windows clients identified as CDPSvc (benign, left running).
 - Port 33060 on MON-SRV (MySQL X Protocol) unused and later disabled.
 
 ### B4 — Issues found and resolved during audit
 
-Seven findings were recorded and closed in the same session (see Issues 1–7 in the Troubleshooting section). All hosts finished the audit with either a clean result or an explicitly documented intentional/benign exception.
+Seven audit observations/issues were recorded during the same session (see Issues 1–7 in the Troubleshooting section). Remediation was applied where required; intentional or benign conditions were documented without unnecessary changes.
 
 **Status:** Complete.
 
@@ -215,7 +215,7 @@ ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no netadmin@10.
 # → Permission denied (publickey)
 ```
 
-Documented as ServiceNow change ticket.
+Documented in ServiceNow as a record labeled `[Change]`.
 
 ![sshd before](screenshots/phase4-08-rtrsite1-sshd-before.png)
 ![sshd after](screenshots/phase4-09-rtrsite1-sshd-after.png)
@@ -233,23 +233,23 @@ Get-ADDefaultDomainPasswordPolicy | Select LockoutThreshold
 # → 5
 ```
 
-Both settings remained stable after the ACL work. Documented as ServiceNow problem ticket.
+Both settings remained stable after the ACL work. Documented in ServiceNow as a record labeled `[Problem]`.
 
 ![wuauserv restored](screenshots/phase4-13-wuauserv-lockout-restored.png)
 
 ### D4 — zabbix sudoers cleanup (already performed in audit)
 
-The passwordless `nmap -O *` grant was renamed out of `/etc/sudoers.d/` during the Part B audit and re-confirmed. Documented as ServiceNow problem/security ticket.
+The passwordless `nmap -O *` grant was renamed out of `/etc/sudoers.d/` during the Part B audit and re-confirmed. Documented in ServiceNow as a record labeled `[Problem/Security]`.
 
 ![zabbix sudoers before](screenshots/phase4-14-zabbix-sudoers-before.png)
 ![zabbix sudoers after](screenshots/phase4-15-zabbix-sudoers-after.png)
 
-### ITIL ticketing summary
+### ServiceNow documentation summary
 
 | # | Number | Intended type | Short description (abridged) | Priority |
 |---|---|---|---|---|
 | 1 | INC0010003 | Incident | Site 2 DHCP / AD broken by ACL | High |
-| 2 | INC0010004 | Problem | DC Windows Update service disabled ~4 years | High |
+| 2 | INC0010004 | Problem | DC Windows Update service stopped / outdated hotfix state observed | High |
 | 3 | INC0010005 | Problem/Security | Undocumented zabbix sudoers entry | Moderate |
 | 4 | INC0010006 | Incident | SRV-S2-SERVERS kernel deadlock during scan | Moderate |
 | 5 | INC0010007 | Change | SSH key-based authentication on infrastructure host | Moderate |
@@ -302,7 +302,7 @@ dir \\SRV-S1-SERVERS\TechShare
 
 **Method:** From both Users VLANs — domain authentication, DNS resolution, file-share access, Zabbix agent check-ins observed in the monitoring UI.
 
-**Result:** All critical paths succeed; unsolicited ports remain blocked by default deny.
+**Result:** All critical paths succeed while the routers remain under the default-deny routed policy.
 
 **Evidence:** (combined with Test 1 and monitoring dashboard checks)
 
@@ -356,7 +356,7 @@ ls /etc/sudoers.d/
 
 **Result:** All five tickets closed with “Solution provided” and full chronological evidence.
 
-**Evidence:** Ticket screenshots phase4-15 through phase4-26.
+**Evidence:** Ticket screenshots `phase4-16` through `phase4-27` (see ServiceNow documentation summary above).
 
 ## 7. Troubleshooting & Issues
 
@@ -378,7 +378,7 @@ ls /etc/sudoers.d/
 
 **Symptom:** `apt update` and `ping 8.8.8.8` fail with “Network is unreachable”.
 
-**Root cause:** No default route is configured. A NAT-capable interface exists in netplan but the adapter is not attached in Hyper-V. MON-SRV is the sole internet-egress host by design.
+**Root cause:** No default route is configured on either router. A NAT-capable interface exists in netplan but the adapter is not attached in Hyper-V. Internet access for the routers is therefore intentionally absent.
 
 **Fix:** None required — documented as intentional topology.
 
@@ -402,7 +402,7 @@ ls /etc/sudoers.d/
 
 **Symptom:** Nmap showed 33060/tcp (mysqlx) open.
 
-**Root cause:** Feature enabled by default in MySQL 8; unused by Zabbix or any other service in the lab.
+**Root cause:** MySQL X Protocol was enabled in this installation but was unused by Zabbix or any other service in the lab.
 
 **Fix:**
 ```bash
@@ -418,7 +418,7 @@ Port confirmed closed; MySQL remained healthy.
 
 **Where:** SRV-S1-SERVERS
 
-**Symptom:** Only three hotfixes, all dated March 2022, despite normal uptime.
+**Symptom:** `Get-HotFix` returned only three entries, all dated March 2022; `wuauserv` was not running.
 
 **Root cause:** `wuauserv` StartType = Manual and Status = Stopped.
 
@@ -428,7 +428,7 @@ Set-Service wuauserv -StartupType Automatic
 Start-Service wuauserv
 ```
 
-**Lesson:** A domain controller that has not received security updates for years is a high-priority finding even in a lab; the service state is the first place to look.
+**Lesson:** A stopped Windows Update service and sparse older hotfix output are enough to justify reviewing the update configuration; the service state was corrected in this lab.
 
 ### Issue 6 — Account lockout threshold was zero
 
@@ -474,7 +474,7 @@ sudo -l -U zabbix   # confirmed no remaining privileges
 
 **Fix:** Matching UDP allow rules added for the same source/destination pairs; `ufw reload`.
 
-**Lesson:** When writing ACLs for Active Directory, always include the UDP counterparts of the well-known AD ports; TCP-only rules are incomplete.
+**Lesson:** In this lab, the AD paths required UDP 88, 389, and 464 in addition to the TCP rules. The required protocols should be validated against live authentication behavior rather than assumed from a TCP-only list.
 
 ### Issue 9 — ACL missing DHCP-relay reply path
 
@@ -491,7 +491,7 @@ sudo ufw route allow proto udp from 10.10.12.10 to 10.10.21.1 port 67
 sudo ufw reload
 ```
 
-**Lesson:** Relay protocols re-address traffic using their own interface. ACL rules scoped only to “client subnet” or “router WAN address” will miss the reply path. Always verify with live logs before declaring an ACL complete.
+**Lesson:** DHCP relay replies target the relay interface identified by `giaddr`. ACLs must permit that return path, and relay logs should be checked when renewal requests leave but replies do not return.
 
 ### Issue 10 — cloud-init override kept password authentication enabled
 
@@ -505,4 +505,7 @@ sudo ufw reload
 
 **Lesson:** On cloud-init-provisioned Ubuntu hosts, never trust the main sshd_config alone. Always verify the running configuration with `sshd -T` after any authentication change.
 
-**Overall summary:** Every issue was either an incomplete first-pass configuration or a pre-existing latent condition. The final ACL, SSH, and policy state is stable and still permits every service the earlier phases depend on.
+**Overall summary:** The Phase 4 issues were resolved through ACL corrections, configuration changes, or remediation of pre-existing findings. Final validation confirmed that the critical Phase 2 and Phase 3 service paths remained functional under the hardened configuration.
+---
+
+[← Main README](../README.md) · [01 — Design & Decisions](01-decisions.md) · [03 — Phase Summary →](03-phase-summary.md)
