@@ -156,4 +156,4 @@ Detailed limitations and final verification steps are documented in [docs/final_
 
 I built this project to demonstrate the practical skills I’ve developed across networking and systems administration. The lab brings together routing, Windows Server, Linux, monitoring, and security in one working environment, with the design decisions, verification, and troubleshooting documented throughout.
 
-**Contact:** [LinkedIn](https://www.linkedin.com/in/surosh-khaliqi/) · [Email](mailto:khaliqi.surosh@gmail.com)
+**Contact:** [LinkedIn](https://www.linkedin.com/in/surosh-khaliqi/) · [khaliqi.surosh@gmail.com](mailto:khaliqi.surosh@gmail.com)
